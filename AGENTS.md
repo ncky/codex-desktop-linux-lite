@@ -95,13 +95,13 @@ Or let the script download the DMG:
 Default output:
 
 ```bash
-dist/codex-desktop_YYYY.MM.DD_amd64.deb
+dist/codex-desktop_YYYY.MM.DD.HHMMSS_amd64.deb
 ```
 
 Optional version override:
 
 ```bash
-PACKAGE_VERSION=2026.03.24 ./scripts/build-deb.sh
+PACKAGE_VERSION=2026.03.24.120000+deadbeef ./scripts/build-deb.sh
 ```
 
 ## Runtime Expectations

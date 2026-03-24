@@ -12,7 +12,7 @@ SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
 ICON_SOURCE="$REPO_DIR/assets/codex.png"
 
 PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
-PACKAGE_VERSION="${PACKAGE_VERSION:-$(date +%Y.%m.%d)}"
+PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
 UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
 UPDATE_BUILDER_ROOT="$PKG_ROOT/opt/$PACKAGE_NAME/update-builder"
