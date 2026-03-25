@@ -39,6 +39,7 @@ async fn run_daemon(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
+    state.auto_install_on_app_exit = config.auto_install_on_app_exit;
     state.save(&paths.state_file)?;
     info!("daemon initialized");
 
@@ -82,6 +83,8 @@ async fn run_check_now(
     state: &mut PersistedState,
     paths: &RuntimePaths,
 ) -> Result<()> {
+    state.auto_install_on_app_exit = config.auto_install_on_app_exit;
+    state.save(&paths.state_file)?;
     run_check_cycle(config, state, paths).await?;
     reconcile_pending_install(config, state, paths).await
 }
@@ -206,6 +209,7 @@ async fn reconcile_pending_install(
     paths: &RuntimePaths,
 ) -> Result<()> {
     state.installed_version = install::installed_package_version();
+    state.auto_install_on_app_exit = config.auto_install_on_app_exit;
 
     match state.status {
         UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit => {
