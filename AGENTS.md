@@ -32,6 +32,8 @@ The current working flow is:
   Debian control template.
 - `packaging/linux/codex-desktop.desktop`
   Desktop entry template.
+- `packaging/linux/codex-packaged-runtime.sh`
+  Packaged-launcher helper for native-package-only runtime behavior.
 - `packaging/linux/codex-desktop.spec`
   RPM spec template.
 - `packaging/linux/codex-update-manager.service`
@@ -218,6 +220,7 @@ sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
 ## Editing Guidance
 
 - Prefer changing `install.sh` over manually patching `codex-app/start.sh`, unless you are making a temporary local test.
+- Keep native-package-only launcher behavior in `packaging/linux/codex-packaged-runtime.sh`; `install.sh` should stay generic and only load that helper optionally.
 - If you update the launcher template inside `install.sh`, regenerate `codex-app/` or keep `codex-app/start.sh` aligned before building a new package.
 - Keep packaging changes in `packaging/linux/`, `scripts/build-deb.sh`, and `scripts/build-rpm.sh`; avoid hardcoding distro-specific behavior outside those files unless necessary.
 - Keep `scripts/lib/package-common.sh` aligned with both builders when you add or remove packaged files from the shared runtime payload.

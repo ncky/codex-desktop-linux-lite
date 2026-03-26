@@ -177,6 +177,8 @@ The extracted app expects a local webview origin on `localhost:5175`, so the cur
 
 The current evaluation for a future Rust replacement lives in `docs/webview-server-evaluation.md`.
 
+Native-package-only launcher behavior such as desktop-entry hints and `codex-update-manager` session bootstrapping now lives in `packaging/linux/codex-packaged-runtime.sh`, which the generated launcher loads only when present inside a packaged install.
+
 The launcher also writes logs to:
 
 ```bash
