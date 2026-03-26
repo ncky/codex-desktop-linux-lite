@@ -103,6 +103,7 @@ SCRIPT
     assert_file_exists "$pkg_root/DEBIAN/prerm"
     assert_file_exists "$pkg_root/DEBIAN/postrm"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/package-common.sh"
+    assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
 }
 
 test_rpm_builder_smoke() {
@@ -182,7 +183,8 @@ test_launcher_template_sanity() {
     assert_contains "$REPO_DIR/install.sh" "--app-id=codex-desktop"
     assert_contains "$REPO_DIR/install.sh" "--ozone-platform-hint=auto"
     assert_contains "$REPO_DIR/install.sh" "--disable-gpu-sandbox"
-    assert_contains "$REPO_DIR/install.sh" "CHROME_DESKTOP"
+    assert_contains "$REPO_DIR/install.sh" "PACKAGED_RUNTIME_HELPER"
+    assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "CHROME_DESKTOP"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "BAMF_DESKTOP_FILE_HINT"
 }
 

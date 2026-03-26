@@ -13,11 +13,13 @@ SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
 ICON_SOURCE="$REPO_DIR/assets/codex.png"
 PRERM_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.prerm"
 POSTRM_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.postrm"
+PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
 
 PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
 PACKAGE_VERSION="${PACKAGE_VERSION:-$(date -u +%Y.%m.%d.%H%M%S)}"
 UPDATER_BINARY_SOURCE="${UPDATER_BINARY_SOURCE:-$REPO_DIR/target/release/codex-update-manager}"
 UPDATER_SERVICE_SOURCE="${UPDATER_SERVICE_SOURCE:-$SERVICE_TEMPLATE}"
+PACKAGED_RUNTIME_SOURCE="${PACKAGED_RUNTIME_SOURCE:-$PACKAGED_RUNTIME_TEMPLATE}"
 
 map_arch() {
     case "$(dpkg --print-architecture)" in
@@ -38,6 +40,7 @@ main() {
     ensure_file_exists "$ICON_SOURCE" "icon"
     ensure_file_exists "$PRERM_TEMPLATE" "Debian prerm template"
     ensure_file_exists "$POSTRM_TEMPLATE" "Debian postrm template"
+    ensure_file_exists "$PACKAGED_RUNTIME_SOURCE" "packaged launcher runtime helper"
     command -v dpkg-deb >/dev/null 2>&1 || error "dpkg-deb is required"
     command -v dpkg >/dev/null 2>&1 || error "dpkg is required"
 

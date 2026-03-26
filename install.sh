@@ -249,12 +249,31 @@ LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/codex-desktop"
 LOG_FILE="$LOG_DIR/launcher.log"
 APP_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/codex-desktop"
 APP_PID_FILE="$APP_STATE_DIR/app.pid"
-DESKTOP_FILE_HINT="/usr/share/applications/codex-desktop.desktop"
+PACKAGED_RUNTIME_HELPER="$SCRIPT_DIR/.codex-linux/codex-packaged-runtime.sh"
 
 mkdir -p "$LOG_DIR" "$APP_STATE_DIR"
 exec >>"$LOG_FILE" 2>&1
 
 echo "[$(date -Is)] Starting Codex Desktop launcher"
+
+load_packaged_runtime_helper() {
+    if [ -f "$PACKAGED_RUNTIME_HELPER" ]; then
+        # shellcheck disable=SC1090
+        . "$PACKAGED_RUNTIME_HELPER"
+    fi
+}
+
+run_packaged_runtime_prelaunch() {
+    if declare -F codex_packaged_runtime_prelaunch >/dev/null 2>&1; then
+        codex_packaged_runtime_prelaunch
+    fi
+}
+
+export_packaged_runtime_env() {
+    if declare -F codex_packaged_runtime_export_env >/dev/null 2>&1; then
+        codex_packaged_runtime_export_env
+    fi
+}
 
 find_codex_cli() {
     if command -v codex >/dev/null 2>&1; then
@@ -324,46 +343,9 @@ clear_stale_pid_file() {
     fi
 }
 
-ensure_update_manager_service() {
-    if ! command -v systemctl >/dev/null 2>&1; then
-        return 0
-    fi
-
-    if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "$XDG_RUNTIME_DIR" ]; then
-        return 0
-    fi
-
-    if ! systemctl --user show-environment >/dev/null 2>&1; then
-        return 0
-    fi
-
-    systemctl --user import-environment \
-        PATH \
-        DISPLAY \
-        WAYLAND_DISPLAY \
-        DBUS_SESSION_BUS_ADDRESS \
-        XAUTHORITY \
-        XDG_RUNTIME_DIR >/dev/null 2>&1 || true
-
-    if command -v dbus-update-activation-environment >/dev/null 2>&1; then
-        dbus-update-activation-environment --systemd \
-            PATH \
-            DISPLAY \
-            WAYLAND_DISPLAY \
-            DBUS_SESSION_BUS_ADDRESS \
-            XAUTHORITY \
-            XDG_RUNTIME_DIR >/dev/null 2>&1 || true
-    fi
-
-    if systemctl --user is-enabled codex-update-manager.service >/dev/null 2>&1; then
-        systemctl --user restart codex-update-manager.service >/dev/null 2>&1 || true
-    else
-        systemctl --user enable --now codex-update-manager.service >/dev/null 2>&1 || true
-    fi
-}
-
+load_packaged_runtime_helper
 clear_stale_pid_file
-ensure_update_manager_service
+run_packaged_runtime_prelaunch
 pkill -f "http.server 5175" 2>/dev/null || true
 sleep 0.5
 
@@ -389,8 +371,7 @@ if [ -z "$CODEX_CLI_PATH" ]; then
     exit 1
 fi
 
-export CHROME_DESKTOP="codex-desktop.desktop"
-export BAMF_DESKTOP_FILE_HINT="$DESKTOP_FILE_HINT"
+export_packaged_runtime_env
 
 echo "Using CODEX_CLI_PATH=$CODEX_CLI_PATH"
 

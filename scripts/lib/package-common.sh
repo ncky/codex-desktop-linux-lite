@@ -49,12 +49,15 @@ stage_common_package_files() {
 
     rm -rf "$app_root"
     cp -aT "$APP_DIR" "$app_root"
+    mkdir -p "$app_root/.codex-linux"
     cp "$DESKTOP_TEMPLATE" "$root/usr/share/applications/$PACKAGE_NAME.desktop"
     cp "$ICON_SOURCE" "$root/usr/share/icons/hicolor/256x256/apps/$PACKAGE_NAME.png"
     cp "$UPDATER_BINARY_SOURCE" "$root/usr/bin/codex-update-manager"
     chmod 0755 "$root/usr/bin/codex-update-manager"
     cp "$UPDATER_SERVICE_SOURCE" "$root/usr/lib/systemd/user/codex-update-manager.service"
     chmod 0644 "$root/usr/lib/systemd/user/codex-update-manager.service"
+    cp "$PACKAGED_RUNTIME_SOURCE" "$app_root/.codex-linux/codex-packaged-runtime.sh"
+    chmod 0644 "$app_root/.codex-linux/codex-packaged-runtime.sh"
 }
 
 stage_update_builder_bundle() {
@@ -74,6 +77,7 @@ stage_update_builder_bundle() {
     cp "$REPO_DIR/packaging/linux/control" "$update_builder_root/packaging/linux/control"
     cp "$REPO_DIR/packaging/linux/codex-desktop.spec" "$update_builder_root/packaging/linux/codex-desktop.spec"
     cp "$REPO_DIR/packaging/linux/codex-desktop.desktop" "$update_builder_root/packaging/linux/codex-desktop.desktop"
+    cp "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "$update_builder_root/packaging/linux/codex-packaged-runtime.sh"
     cp "$UPDATER_SERVICE_SOURCE" "$update_builder_root/packaging/linux/codex-update-manager.service"
     cp "$REPO_DIR/packaging/linux/codex-update-manager.prerm" "$update_builder_root/packaging/linux/codex-update-manager.prerm"
     cp "$REPO_DIR/packaging/linux/codex-update-manager.postrm" "$update_builder_root/packaging/linux/codex-update-manager.postrm"
