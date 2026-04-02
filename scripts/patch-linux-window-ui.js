@@ -16,7 +16,8 @@ const iconAsset = fs
   .find((name) => /^app-.*\.png$/.test(name));
 
 if (!iconAsset) {
-  throw new Error(`Could not find app icon asset in ${assetsDir}`);
+  console.warn(`WARN: Could not find app icon asset in ${assetsDir} — skipping all UI patches`);
+  process.exit(0);
 }
 
 const buildDir = path.join(extractedDir, ".vite", "build");
@@ -25,7 +26,8 @@ const mainBundle = fs
   .find((name) => /^main(?:-[^.]+)?\.js$/.test(name));
 
 if (!mainBundle) {
-  throw new Error(`Could not find main bundle in ${buildDir}`);
+  console.warn(`WARN: Could not find main bundle in ${buildDir} — skipping all UI patches`);
+  process.exit(0);
 }
 
 const target = path.join(buildDir, mainBundle);
