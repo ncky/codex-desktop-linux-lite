@@ -20,8 +20,29 @@ ensure_app_layout() {
     [ -x "$APP_DIR/start.sh" ] || error "Missing launcher: $APP_DIR/start.sh"
 }
 
+updater_binary_is_stale() {
+    local binary="$1"
+
+    [ -x "$binary" ] || return 0
+
+    local source
+    for source in "$REPO_DIR/Cargo.toml" "$REPO_DIR/Cargo.lock"; do
+        if [ -f "$source" ] && [ "$source" -nt "$binary" ]; then
+            return 0
+        fi
+    done
+
+    while IFS= read -r -d '' source; do
+        if [ "$source" -nt "$binary" ]; then
+            return 0
+        fi
+    done < <(find "$REPO_DIR/updater" -type f -print0 2>/dev/null)
+
+    return 1
+}
+
 ensure_updater_binary() {
-    if [ -x "$UPDATER_BINARY_SOURCE" ]; then
+    if [ -x "$UPDATER_BINARY_SOURCE" ] && ! updater_binary_is_stale "$UPDATER_BINARY_SOURCE"; then
         return
     fi
 

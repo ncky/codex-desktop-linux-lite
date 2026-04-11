@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use std::{
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -36,20 +37,15 @@ pub enum PackageKind {
 
 impl PackageKind {
     pub fn detect() -> Self {
-        if program_exists(PACMAN_CANDIDATES, "pacman")
-            && !program_exists(DPKG_CANDIDATES, "dpkg")
-            && !program_exists(RPM_CANDIDATES, "rpm")
-        {
-            Self::Pacman
-        } else if program_exists(DPKG_CANDIDATES, "dpkg") {
-            Self::Deb
-        } else if program_exists(RPM_CANDIDATES, "rpm") {
-            Self::Rpm
-        } else if program_exists(PACMAN_CANDIDATES, "pacman") {
-            Self::Pacman
-        } else {
-            Self::Deb
-        }
+        detect_package_kind(
+            program_exists(PACMAN_CANDIDATES, "pacman"),
+            program_exists(DPKG_CANDIDATES, "dpkg"),
+            program_exists(RPM_CANDIDATES, "rpm"),
+            installed_pacman_version() != "unknown",
+            installed_deb_version() != "unknown",
+            installed_rpm_version() != "unknown",
+            os_release_fields(),
+        )
     }
 
     pub fn from_path(path: &Path) -> Self {
@@ -66,6 +62,103 @@ impl PackageKind {
             _ => Self::Deb,
         }
     }
+}
+
+fn detect_package_kind(
+    has_pacman: bool,
+    has_dpkg: bool,
+    has_rpm: bool,
+    pacman_installed: bool,
+    deb_installed: bool,
+    rpm_installed: bool,
+    os_release: Option<(String, String)>,
+) -> PackageKind {
+    if pacman_installed {
+        return PackageKind::Pacman;
+    }
+    if deb_installed {
+        return PackageKind::Deb;
+    }
+    if rpm_installed {
+        return PackageKind::Rpm;
+    }
+
+    if let Some((id, id_like)) = os_release {
+        let fields = [id.as_str(), id_like.as_str()];
+        if os_release_matches(
+            &fields,
+            &["arch", "archlinux", "manjaro", "endeavouros", "artix"],
+        ) {
+            return PackageKind::Pacman;
+        }
+        if os_release_matches(
+            &fields,
+            &[
+                "debian",
+                "ubuntu",
+                "linuxmint",
+                "pop",
+                "elementary",
+                "zorin",
+            ],
+        ) {
+            return PackageKind::Deb;
+        }
+        if os_release_matches(
+            &fields,
+            &[
+                "fedora",
+                "rhel",
+                "centos",
+                "rocky",
+                "almalinux",
+                "ol",
+                "sles",
+                "suse",
+                "opensuse",
+            ],
+        ) {
+            return PackageKind::Rpm;
+        }
+    }
+
+    if has_dpkg {
+        PackageKind::Deb
+    } else if has_rpm {
+        PackageKind::Rpm
+    } else if has_pacman {
+        PackageKind::Pacman
+    } else {
+        PackageKind::Deb
+    }
+}
+
+fn os_release_fields() -> Option<(String, String)> {
+    let contents = fs::read_to_string("/etc/os-release").ok()?;
+    let mut id = String::new();
+    let mut id_like = String::new();
+
+    for line in contents.lines() {
+        if let Some(value) = line.strip_prefix("ID=") {
+            id = trim_os_release_value(value).to_ascii_lowercase();
+        } else if let Some(value) = line.strip_prefix("ID_LIKE=") {
+            id_like = trim_os_release_value(value).to_ascii_lowercase();
+        }
+    }
+
+    Some((id, id_like))
+}
+
+fn trim_os_release_value(value: &str) -> &str {
+    value.trim().trim_matches('"').trim_matches('\'')
+}
+
+fn os_release_matches(fields: &[&str], expected: &[&str]) -> bool {
+    fields.iter().any(|field| {
+        field
+            .split_whitespace()
+            .any(|token| expected.iter().any(|candidate| token == *candidate))
+    })
 }
 
 /// Returns the currently installed package version when available.
@@ -530,6 +623,82 @@ mod tests {
             )),
             PackageKind::Pacman
         );
+    }
+
+    #[test]
+    fn detection_prefers_installed_pacman_package_even_if_rpm_exists() {
+        assert_eq!(
+            detect_package_kind(
+                true,
+                false,
+                true,
+                true,
+                false,
+                false,
+                Some(("arch".to_string(), "".to_string())),
+            ),
+            PackageKind::Pacman
+        );
+    }
+
+    #[test]
+    fn detection_uses_arch_os_release_when_nothing_is_installed() {
+        assert_eq!(
+            detect_package_kind(
+                true,
+                false,
+                true,
+                false,
+                false,
+                false,
+                Some(("arch".to_string(), "".to_string())),
+            ),
+            PackageKind::Pacman
+        );
+    }
+
+    #[test]
+    fn detection_uses_debian_os_release_before_rpm_command_presence() {
+        assert_eq!(
+            detect_package_kind(
+                false,
+                true,
+                true,
+                false,
+                false,
+                false,
+                Some(("ubuntu".to_string(), "debian".to_string())),
+            ),
+            PackageKind::Deb
+        );
+    }
+
+    #[test]
+    fn detection_uses_rpm_os_release_before_pacman_command_presence() {
+        assert_eq!(
+            detect_package_kind(
+                true,
+                false,
+                true,
+                false,
+                false,
+                false,
+                Some(("fedora".to_string(), "rhel".to_string())),
+            ),
+            PackageKind::Rpm
+        );
+    }
+
+    #[test]
+    fn trims_quoted_os_release_values() {
+        assert_eq!(trim_os_release_value("\"arch\""), "arch");
+        assert_eq!(trim_os_release_value("'debian ubuntu'"), "debian ubuntu");
+    }
+
+    #[test]
+    fn matches_expected_os_release_tokens() {
+        assert!(os_release_matches(&["ubuntu debian", ""], &["debian"]));
+        assert!(!os_release_matches(&["ubuntu", ""], &["fedora"]));
     }
 
     #[test]
