@@ -34,6 +34,54 @@ const target = path.join(buildDir, mainBundle);
 let source = fs.readFileSync(target, "utf8");
 const packageJsonPath = path.join(extractedDir, "package.json");
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+const webviewAssetsDir = path.join(extractedDir, "webview", "assets");
+
+function patchAssetFiles(filenamePattern, patchFn, missingWarnMessage) {
+  if (!fs.existsSync(webviewAssetsDir)) {
+    console.warn(`WARN: Could not find webview assets directory in ${webviewAssetsDir} — skipping asset patch`);
+    return;
+  }
+
+  const candidates = fs
+    .readdirSync(webviewAssetsDir)
+    .filter((name) => filenamePattern.test(name))
+    .sort();
+
+  if (candidates.length === 0) {
+    console.warn(missingWarnMessage);
+    return;
+  }
+
+  for (const candidate of candidates) {
+    const filePath = path.join(webviewAssetsDir, candidate);
+    const currentSource = fs.readFileSync(filePath, "utf8");
+    const patchedSource = patchFn(currentSource);
+    if (patchedSource !== currentSource) {
+      fs.writeFileSync(filePath, patchedSource, "utf8");
+    }
+  }
+}
+
+function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
+  const mergeNeedle = "opaqueWindows:e?.opaqueWindows??n.opaqueWindows,semanticColors:";
+  const mergePatch =
+    "opaqueWindows:e?.opaqueWindows??(typeof navigator<`u`&&((navigator.userAgentData?.platform??navigator.platform??navigator.userAgent).toLowerCase().includes(`linux`))?!0:n.opaqueWindows),semanticColors:";
+
+  if (currentSource.includes("opaqueWindows:e?.opaqueWindows??(typeof navigator<`u`&&")) {
+    return currentSource;
+  }
+
+  if (currentSource.includes(mergeNeedle)) {
+    return currentSource.replace(mergeNeedle, mergePatch);
+  }
+
+  if (currentSource.includes("opaqueWindows") && currentSource.includes("semanticColors")) {
+    console.warn("WARN: Could not find Linux opaque window default insertion point — skipping settings default patch");
+  }
+
+  return currentSource;
+}
+
 function applyLinuxFileManagerPatch(currentSource) {
   const fileManagerNeedle =
     "var sa=Mi({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>ai(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:ca,args:e=>ai(e),open:async({path:e})=>la(e)}});";
@@ -101,14 +149,12 @@ const iconPathExpression =
   `process.resourcesPath+\`/../content/webview/assets/${iconAsset}\``;
 const iconPathNeedle =
   `icon:${iconPathExpression}`;
-const legacyIconPathNeedle =
-  `icon:t.join(process.resourcesPath,\`..\`,\`content\`,\`webview\`,\`assets\`,\`${iconAsset}\`)`;
 const windowOptionsReplacement =
   `...process.platform===\`win32\`||process.platform===\`linux\`?{autoHideMenuBar:!0,...process.platform===\`linux\`?{${iconPathNeedle}}:{}}:{},`;
 
 if (source.includes(windowOptionsNeedle)) {
   source = source.replace(windowOptionsNeedle, windowOptionsReplacement);
-} else if (!source.includes(iconPathNeedle) && !source.includes(legacyIconPathNeedle)) {
+} else if (!source.includes(iconPathNeedle) && !source.includes(iconPathNeedle)) {
   console.warn("WARN: Could not find BrowserWindow autoHideMenuBar snippet — skipping window options patch");
 }
 
@@ -170,12 +216,23 @@ source = applyLinuxFileManagerPatch(source);
 
 fs.writeFileSync(target, source, "utf8");
 
+patchAssetFiles(
+  /^code-theme-.*\.js$/,
+  applyLinuxOpaqueWindowsDefaultPatch,
+  `WARN: Could not find code theme bundle in ${webviewAssetsDir} — skipping translucent sidebar default patch`,
+);
+patchAssetFiles(
+  /^use-resolved-theme-variant-.*\.js$/,
+  applyLinuxOpaqueWindowsDefaultPatch,
+  `WARN: Could not find resolved theme bundle in ${webviewAssetsDir} — skipping translucent sidebar default patch`,
+);
+
 if (packageJson.desktopName !== "codex-desktop.desktop") {
   packageJson.desktopName = "codex-desktop.desktop";
   fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
 }
 
-console.log("Patched Linux window and shell behavior:", {
+console.log("Patched Linux window, shell, and appearance behavior:", {
   target,
   mainBundle,
   iconAsset,
