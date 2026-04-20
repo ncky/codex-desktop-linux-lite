@@ -13,6 +13,7 @@ SERVICE_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.service"
 ICON_SOURCE="$REPO_DIR/assets/codex.png"
 PRERM_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.prerm"
 POSTRM_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.postrm"
+POSTINST_TEMPLATE="$REPO_DIR/packaging/linux/codex-update-manager.postinst"
 PACKAGED_RUNTIME_TEMPLATE="$REPO_DIR/packaging/linux/codex-packaged-runtime.sh"
 
 PACKAGE_NAME="${PACKAGE_NAME:-codex-desktop}"
@@ -40,6 +41,7 @@ main() {
     ensure_file_exists "$ICON_SOURCE" "icon"
     ensure_file_exists "$PRERM_TEMPLATE" "Debian prerm template"
     ensure_file_exists "$POSTRM_TEMPLATE" "Debian postrm template"
+    ensure_file_exists "$POSTINST_TEMPLATE" "Debian postinst template"
     ensure_file_exists "$PACKAGED_RUNTIME_SOURCE" "packaged launcher runtime helper"
     command -v dpkg-deb >/dev/null 2>&1 || error "dpkg-deb is required"
     command -v dpkg >/dev/null 2>&1 || error "dpkg is required"
@@ -65,9 +67,10 @@ main() {
         -e "s/__ARCH__/$arch/g" \
         "$CONTROL_TEMPLATE" > "$PKG_ROOT/DEBIAN/control"
     chmod 0644 "$PKG_ROOT/DEBIAN/control"
+    cp "$POSTINST_TEMPLATE" "$PKG_ROOT/DEBIAN/postinst"
     cp "$PRERM_TEMPLATE" "$PKG_ROOT/DEBIAN/prerm"
     cp "$POSTRM_TEMPLATE" "$PKG_ROOT/DEBIAN/postrm"
-    chmod 0755 "$PKG_ROOT/DEBIAN/prerm" "$PKG_ROOT/DEBIAN/postrm"
+    chmod 0755 "$PKG_ROOT/DEBIAN/postinst" "$PKG_ROOT/DEBIAN/prerm" "$PKG_ROOT/DEBIAN/postrm"
 
     mkdir -p "$DIST_DIR"
     info "Building $output_file"
