@@ -3,6 +3,24 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.0] - 2026-04-27
+
+### Added
+
+- Packaged GUI launches can now prompt to install a missing Codex CLI through `codex-update-manager`, preferring `kdialog` on KDE/Plasma, then `zenity`, and finally an actionable desktop notification when no dialog helper is available.
+- `scripts/install-deps.sh` now installs one desktop-appropriate GUI dialog helper so first-run CLI installation works cleanly outside a terminal.
+
+### Changed
+
+- `make build-app` now defers to `install.sh` when no `DMG=...` override is provided, so fresh checkouts can reuse or download `Codex.dmg` through the installer's normal flow instead of failing on a missing local cache path.
+- Launcher CLI preflight now uses cached local CLI state on the fast path, leaving heavier `codex --version` and registry refresh work to the updater when the cache is stale or invalid.
+
+### Fixed
+
+- `codex-update-manager` now refreshes CLI status when the daemon starts and shows a desktop notification if the Codex CLI is missing, so package installs do not rely on the user manually checking updater state to understand why Codex Desktop cannot launch cleanly.
+- When the Codex CLI is missing, terminal launches still prompt before installation and GUI launches now have a matching fallback path instead of failing with only a passive notification.
+
+
 ## [0.5.0] - 2026-04-30
 
 ### Added
