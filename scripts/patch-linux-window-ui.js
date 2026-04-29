@@ -255,7 +255,7 @@ function applyLinuxSetIconPatch(currentSource, iconAsset) {
 }
 
 function applyLinuxOpaqueBackgroundPatch(currentSource) {
-  if (currentSource.includes("process.platform===`linux`?{backgroundColor:")) {
+  if (currentSource.includes("process.platform===`linux`&&!gw(")) {
     return currentSource;
   }
 
@@ -283,11 +283,16 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
   const darkColorsParam = funcMatch[1];
   const bgNeedle =
     `backgroundMaterial:\`mica\`}:{backgroundColor:${transparentVar},backgroundMaterial:null}}`;
-  const bgReplacement =
+  const oldLinuxBgPatch =
     `backgroundMaterial:\`mica\`}:process.platform===\`linux\`?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:{backgroundColor:${transparentVar},backgroundMaterial:null}}`;
+  const bgReplacement =
+    `backgroundMaterial:\`mica\`}:process.platform===\`linux\`&&!gw(t)?{backgroundColor:${darkColorsParam}?${darkVar}:${lightVar},backgroundMaterial:null}:{backgroundColor:${transparentVar},backgroundMaterial:null}}`;
 
   if (currentSource.includes(bgNeedle)) {
     return currentSource.replace(bgNeedle, bgReplacement);
+  }
+  if (currentSource.includes(oldLinuxBgPatch)) {
+    return currentSource.replace(oldLinuxBgPatch, bgReplacement);
   }
 
   console.warn("WARN: Could not find BrowserWindow background color needle — skipping background patch");
@@ -458,6 +463,36 @@ function applyLinuxSingleInstancePatch(currentSource) {
   return patchedSource;
 }
 
+function applyBrowserAnnotationScreenshotPatch(currentSource) {
+  let patchedSource = currentSource;
+
+  const liveElementScreenshotNeedle =
+    "if(M&&j?.anchor.kind===`element`){let e=qu(j,y.current)??null,t=e==null?null:rd(e);he=t?.rect??md(j.anchor),_e=t?.borderRadius}";
+  const storedAnchorScreenshotPatch =
+    "if(M&&j?.anchor.kind===`element`){he=md(j.anchor),_e=void 0}";
+  if (patchedSource.includes(storedAnchorScreenshotPatch)) {
+    // Already patched.
+  } else if (patchedSource.includes(liveElementScreenshotNeedle)) {
+    patchedSource = patchedSource.replace(liveElementScreenshotNeedle, storedAnchorScreenshotPatch);
+  } else {
+    console.warn("WARN: Could not find browser annotation screenshot element highlight — skipping screenshot anchor patch");
+  }
+
+  const allMarkersInScreenshotNeedle =
+    "de=u?.target.mode===`create`?ce.find(e=>Sd(e.anchor,u.anchor.value))??null:null,fe=!M&&de!=null?ce.filter(e=>e.id!==de.id):ce,";
+  const selectedMarkerInScreenshotPatch =
+    "de=u?.target.mode===`create`?ce.find(e=>Sd(e.anchor,u.anchor.value))??null:null,fe=M?ue:!M&&de!=null?ce.filter(e=>e.id!==de.id):ce,";
+  if (patchedSource.includes(selectedMarkerInScreenshotPatch)) {
+    // Already patched.
+  } else if (patchedSource.includes(allMarkersInScreenshotNeedle)) {
+    patchedSource = patchedSource.replace(allMarkersInScreenshotNeedle, selectedMarkerInScreenshotPatch);
+  } else {
+    console.warn("WARN: Could not find browser annotation screenshot markers — skipping screenshot marker patch");
+  }
+
+  return patchedSource;
+}
+
 function patchMainBundleSource(source, iconAsset) {
   let patched = source;
   const iconPathExpression =
@@ -486,6 +521,22 @@ function patchPackageJson(extractedDir) {
   return packageJson.desktopName;
 }
 
+function patchCommentPreloadBundle(extractedDir) {
+  const commentPreloadBundle = path.join(extractedDir, ".vite", "build", "comment-preload.js");
+  if (!fs.existsSync(commentPreloadBundle)) {
+    console.warn(
+      `WARN: Could not find comment preload bundle in ${path.dirname(commentPreloadBundle)} — skipping annotation screenshot patch`,
+    );
+    return;
+  }
+
+  const source = fs.readFileSync(commentPreloadBundle, "utf8");
+  const patchedSource = applyBrowserAnnotationScreenshotPatch(source);
+  if (patchedSource !== source) {
+    fs.writeFileSync(commentPreloadBundle, patchedSource, "utf8");
+  }
+}
+
 function patchExtractedApp(extractedDir) {
   const main = findMainBundle(extractedDir);
   if (main == null) {
@@ -509,6 +560,8 @@ function patchExtractedApp(extractedDir) {
       fs.writeFileSync(target, patchedSource, "utf8");
     }
   }
+
+  patchCommentPreloadBundle(extractedDir);
 
   patchAssetFiles(
     extractedDir,
@@ -576,6 +629,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  applyBrowserAnnotationScreenshotPatch,
   applyLinuxFileManagerPatch,
   applyLinuxMenuPatch,
   applyLinuxOpaqueBackgroundPatch,
@@ -584,6 +638,7 @@ module.exports = {
   applyLinuxSingleInstancePatch,
   applyLinuxTrayPatch,
   applyLinuxWindowOptionsPatch,
+  patchCommentPreloadBundle,
   patchExtractedApp,
   patchMainBundleSource,
 };

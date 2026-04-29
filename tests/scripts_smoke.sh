@@ -437,6 +437,29 @@ JS
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`)&&oe' '1'
 }
 
+test_browser_annotation_screenshot_patch_smoke() {
+    info "Checking browser annotation screenshot patch behavior"
+    local workspace="$TMP_DIR/browser-annotation-patch"
+    local extracted="$workspace/extracted"
+    local output_log="$workspace/output.log"
+
+    mkdir -p "$workspace"
+    make_fake_extracted_asar "$extracted" 'let D={removeMenu(){},setMenuBarVisibility(){},setIcon(){},once(){}};let n=require(`electron`),t=require(`node:path`),a=require(`node:fs`);...process.platform===`win32`?{autoHideMenuBar:!0}:{},process.platform===`win32`&&D.removeMenu(),foo)}),D.once(`ready-to-show`,()=>{})'
+    cat > "$extracted/.vite/build/comment-preload.js" <<'JS'
+if(M&&j?.anchor.kind===`element`){let e=qu(j,y.current)??null,t=e==null?null:rd(e);he=t?.rect??md(j.anchor),_e=t?.borderRadius}
+de=u?.target.mode===`create`?ce.find(e=>Sd(e.anchor,u.anchor.value))??null:null,fe=!M&&de!=null?ce.filter(e=>e.id!==de.id):ce,
+JS
+
+    node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
+    assert_contains "$extracted/.vite/build/comment-preload.js" 'if(M&&j?.anchor.kind===`element`){he=md(j.anchor),_e=void 0}'
+    assert_contains "$extracted/.vite/build/comment-preload.js" 'fe=M?ue:!M&&de!=null?ce.filter(e=>e.id!==de.id):ce,'
+    assert_not_contains "$extracted/.vite/build/comment-preload.js" 'qu(j,y.current)'
+
+    node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
+    assert_occurrence_count "$extracted/.vite/build/comment-preload.js" 'he=md(j.anchor)' '1'
+    assert_occurrence_count "$extracted/.vite/build/comment-preload.js" 'fe=M?ue' '1'
+}
+
 test_linux_single_instance_patch_smoke() {
     info "Checking Linux single-instance patch behavior"
     local workspace="$TMP_DIR/single-instance-patch"
@@ -487,6 +510,7 @@ main() {
     test_linux_file_manager_patch_smoke
     test_linux_translucent_sidebar_default_patch_smoke
     test_linux_tray_patch_smoke
+    test_browser_annotation_screenshot_patch_smoke
     test_linux_single_instance_patch_smoke
     test_linux_file_manager_patch_fails_soft
     info "All script smoke tests passed"

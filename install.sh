@@ -398,6 +398,91 @@ install_app() {
     info "app.asar installed"
 }
 
+# ---- Install Browser Use bundled plugin resources ----
+is_elf_executable() {
+    local file="$1"
+    python3 - "$file" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    sys.exit(0 if path.read_bytes()[:4] == b"\x7fELF" else 1)
+except OSError:
+    sys.exit(1)
+PY
+}
+
+install_linux_executable_resource() {
+    local source="$1"
+    local destination="$2"
+    local label="$3"
+
+    if [ ! -f "$source" ]; then
+        warn "Browser Use $label not found in upstream resources; skipping"
+        return 1
+    fi
+
+    if ! is_elf_executable "$source"; then
+        warn "Browser Use $label is not a Linux executable; skipping"
+        return 1
+    fi
+
+    install -m 0755 "$source" "$destination"
+}
+
+remove_macos_sidecar_files() {
+    local root="$1"
+    find "$root" -type f -name '*:com.apple.*' -delete
+}
+
+write_browser_use_marketplace() {
+    local source="$1"
+    local destination="$2"
+
+    node - "$source" "$destination" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const sourcePath = process.argv[2];
+const destinationPath = process.argv[3];
+const marketplace = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
+marketplace.plugins = (marketplace.plugins || []).filter((plugin) => plugin.name === "browser-use");
+
+if (marketplace.plugins.length !== 1) {
+  throw new Error("Bundled marketplace does not contain exactly one browser-use plugin");
+}
+
+fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+fs.writeFileSync(destinationPath, `${JSON.stringify(marketplace, null, 2)}\n`);
+NODE
+}
+
+install_browser_use_resources() {
+    local app_dir="$1"
+    local upstream_resources="$app_dir/Contents/Resources"
+    local source_marketplace="$upstream_resources/plugins/openai-bundled/.agents/plugins/marketplace.json"
+    local source_plugin="$upstream_resources/plugins/openai-bundled/plugins/browser-use"
+    local resources_dir="$INSTALL_DIR/resources"
+    local bundled_plugins_dir="$resources_dir/plugins/openai-bundled"
+
+    if [ ! -d "$source_plugin" ] || [ ! -f "$source_marketplace" ]; then
+        warn "Browser Use bundled plugin resources not found in upstream app; skipping"
+        return 0
+    fi
+
+    mkdir -p "$bundled_plugins_dir/plugins" "$bundled_plugins_dir/.agents/plugins"
+    rm -rf "$bundled_plugins_dir/plugins/browser-use"
+    cp -R "$source_plugin" "$bundled_plugins_dir/plugins/browser-use"
+    remove_macos_sidecar_files "$bundled_plugins_dir/plugins/browser-use"
+    write_browser_use_marketplace "$source_marketplace" "$bundled_plugins_dir/.agents/plugins/marketplace.json"
+
+    install_linux_executable_resource "$upstream_resources/node" "$resources_dir/node" "node runtime" || true
+    install_linux_executable_resource "$upstream_resources/node_repl" "$resources_dir/node_repl" "node_repl runtime" || true
+
+    info "Browser Use plugin resources installed"
+}
+
 # ---- Create start script ----
 create_start_script() {
     cat > "$INSTALL_DIR/start.sh" << 'SCRIPT'
@@ -433,7 +518,7 @@ Options:
   -h, --help                  Show this help message and exit
   --disable-gpu               Completely disable GPU acceleration
   --disable-gpu-compositing   Disable GPU compositing (fixes flickering)
-  --ozone-platform=x11        Force X11 instead of Wayland
+  --ozone-platform=x11        Force X11/XWayland explicitly
 
 Extra flags are passed directly to Electron.
 
@@ -480,6 +565,37 @@ run_packaged_runtime_prelaunch() {
 export_packaged_runtime_env() {
     if declare -F codex_packaged_runtime_export_env >/dev/null 2>&1; then
         codex_packaged_runtime_export_env
+    fi
+}
+
+resolve_browser_use_runtime_env() {
+    if [ -z "${CODEX_ELECTRON_RESOURCES_PATH:-}" ]; then
+        export CODEX_ELECTRON_RESOURCES_PATH="$SCRIPT_DIR/resources"
+    fi
+
+    if [ -z "${CODEX_BROWSER_USE_NODE_PATH:-}" ]; then
+        if [ -x "$SCRIPT_DIR/resources/node" ]; then
+            export CODEX_BROWSER_USE_NODE_PATH="$SCRIPT_DIR/resources/node"
+        elif command -v node >/dev/null 2>&1; then
+            CODEX_BROWSER_USE_NODE_PATH="$(command -v node)"
+            export CODEX_BROWSER_USE_NODE_PATH
+        fi
+    fi
+
+    if [ -z "${CODEX_NODE_REPL_PATH:-}" ]; then
+        codex_runtime_node_repl="${XDG_CACHE_HOME:-$HOME/.cache}/codex-runtimes/codex-primary-runtime/dependencies/bin/node_repl"
+        if [ -x "$SCRIPT_DIR/resources/node_repl" ]; then
+            export CODEX_NODE_REPL_PATH="$SCRIPT_DIR/resources/node_repl"
+        elif command -v node_repl >/dev/null 2>&1; then
+            CODEX_NODE_REPL_PATH="$(command -v node_repl)"
+            export CODEX_NODE_REPL_PATH
+        elif [ -x "$codex_runtime_node_repl" ]; then
+            export CODEX_NODE_REPL_PATH="$codex_runtime_node_repl"
+        fi
+    fi
+
+    if [ -z "${CODEX_NODE_REPL_PATH:-}" ]; then
+        echo "Browser Use node_repl runtime not found; in-app browser automation may be unavailable."
     fi
 }
 
@@ -858,6 +974,32 @@ clear_stale_pid_file() {
     fi
 }
 
+has_electron_flag() {
+    local flag_name="$1"
+    shift
+
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            "$flag_name"|"$flag_name="*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+resolve_ozone_platform_args() {
+    OZONE_PLATFORM_ARGS=()
+    if has_electron_flag "--ozone-platform" "$@" || has_electron_flag "--ozone-platform-hint" "$@"; then
+        return 0
+    fi
+
+    if [ "${XDG_SESSION_TYPE:-}" = "wayland" ] && [ -n "${DISPLAY:-}" ]; then
+        OZONE_PLATFORM_ARGS=(--ozone-platform=x11)
+    else
+        OZONE_PLATFORM_ARGS=(--ozone-platform-hint=auto)
+    fi
+}
+
 cleanup_launcher() {
     if [ -n "${ELECTRON_PID:-}" ] && [ -f "$APP_PID_FILE" ]; then
         local current_pid
@@ -876,13 +1018,17 @@ cleanup_launcher() {
 launch_electron() {
     cd "$SCRIPT_DIR"
     log_phase "electron_launch"
+    resolve_ozone_platform_args "$@"
+    if [ "${OZONE_PLATFORM_ARGS[0]:-}" = "--ozone-platform=x11" ]; then
+        echo "Using --ozone-platform=x11 for Wayland window positioning compatibility"
+    fi
 
     if [ "$WARM_START" -eq 1 ]; then
         "$SCRIPT_DIR/electron" \
             --no-sandbox \
             --class=codex-desktop \
             --app-id=codex-desktop \
-            --ozone-platform-hint=auto \
+            "${OZONE_PLATFORM_ARGS[@]}" \
             --disable-gpu-sandbox \
             --disable-gpu-compositing \
             --enable-features=WaylandWindowDecorations \
@@ -894,7 +1040,7 @@ launch_electron() {
         --no-sandbox \
         --class=codex-desktop \
         --app-id=codex-desktop \
-        --ozone-platform-hint=auto \
+        "${OZONE_PLATFORM_ARGS[@]}" \
         --disable-gpu-sandbox \
         --disable-gpu-compositing \
         --enable-features=WaylandWindowDecorations \
@@ -956,6 +1102,7 @@ if [ "$WARM_START" -eq 0 ]; then
 fi
 
 export_packaged_runtime_env
+resolve_browser_use_runtime_env
 
 echo "Using CODEX_CLI_PATH=${CODEX_CLI_PATH:-warm-start-skip}"
 
@@ -1000,6 +1147,7 @@ main() {
     download_electron
     extract_webview "$app_dir"
     install_app
+    install_browser_use_resources "$app_dir"
     create_start_script
 
     if ! command -v codex &>/dev/null; then
