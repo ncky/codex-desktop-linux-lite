@@ -53,7 +53,10 @@ build_native_modules() {
     npm install "better-sqlite3@$bs3_build_ver" "node-pty@$npty_ver" --ignore-scripts 2>&1 >&2
 
     info "Compiling for Electron v$ELECTRON_VERSION (this takes ~1 min)..."
-    npx --yes @electron/rebuild -v "$ELECTRON_VERSION" --force 2>&1 >&2
+    info "Using Electron headers: $ELECTRON_HEADERS_URL"
+    npm_config_disturl="$ELECTRON_HEADERS_URL" \
+    NPM_CONFIG_DISTURL="$ELECTRON_HEADERS_URL" \
+    npx --yes @electron/rebuild -v "$ELECTRON_VERSION" --force --dist-url "$ELECTRON_HEADERS_URL" 2>&1 >&2
 
     info "Native modules built successfully"
 
@@ -77,7 +80,13 @@ download_electron() {
     esac
 
     local electron_zip="electron-v${ELECTRON_VERSION}-linux-${electron_arch}.zip"
-    local url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${electron_zip}"
+    local url
+    if [ -n "$ELECTRON_MIRROR" ]; then
+        url="${ELECTRON_MIRROR%/}/v${ELECTRON_VERSION}/${electron_zip}"
+        info "Using Electron runtime mirror: ${ELECTRON_MIRROR%/}"
+    else
+        url="https://github.com/electron/electron/releases/download/v${ELECTRON_VERSION}/${electron_zip}"
+    fi
     local electron_cache_dir="${CODEX_ELECTRON_CACHE_DIR:-$HOME/.cache/codex-desktop/electron}"
     local cached_zip="$electron_cache_dir/$electron_zip"
     local partial_zip="$cached_zip.part"
