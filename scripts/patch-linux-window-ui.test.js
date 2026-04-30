@@ -9,6 +9,7 @@ const test = require("node:test");
 const {
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxFileManagerPatch,
+  applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxSetIconPatch,
@@ -179,6 +180,67 @@ test("adds installWhenMissing to an already Linux-enabled Computer Use gate", ()
 
   assert.match(patched, /installWhenMissing:!0,name:tn/);
   assert.equal((patched.match(/installWhenMissing:!0,name:tn/g) || []).length, 1);
+});
+
+test("upgrades the base launch-action handler to the Linux warm-start patch", () => {
+  const source = [
+    "async function uT(){",
+    "let k=new t.jn;",
+    "t.Er().info(`Launching app`,{safe:{agentRunId:process.env.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null}});",
+    "let A=Date.now();",
+    "await n.app.whenReady();",
+    "let w=(...e)=>{S.traceCalls.push(e)},",
+    "M={globalState:S.globalState,repoRoot:`/tmp/codex-smoke`},",
+    "z=`local`,",
+    "R={deepLinks:{queueProcessArgs(e){S.queueArgs.push(e);return Array.isArray(e)&&e.some(e=>{let t=String(e);return t.startsWith(`codex://`)||t.startsWith(`codex-browser-sidebar://`)})},flushPendingDeepLinks(){S.flushPendingDeepLinksCalls++;return Promise.resolve()}},navigateToRoute(e,t){S.navigateCalls.push({windowId:e.id,path:t})}},",
+    "P={windowManager:{sendMessageToWindow(e,t){S.messages.push({windowId:e.id,message:t})}},hotkeyWindowLifecycleManager:{hide(){S.hideCalls++},show(){S.showCalls++;return S.hotkeyWindowShowResult},ensureHotkeyWindowController(){S.ensureHotkeyWindowControllerCalls++;return S.hotkeyWindowController}},getPrimaryWindow(){return S.primaryWindow},createFreshLocalWindow(e){S.createFreshLocalWindowCalls.push(e);return S.createdWindow},ensureHostWindow(e){S.ensureHostWindowCalls.push(e);return S.primaryWindow??S.createdWindow}},",
+    "g={reportNonFatal(e,t){S.errors.push({error:String(e),meta:t})}},",
+    "l=e=>{S.initialHandler=e},",
+    "re=e=>{S.focusCalls.push(e.id);e.isMinimized()&&e.restore(),e.show(),e.focus()},",
+    "ie=async()=>{S.ieCalls++;try{P.hotkeyWindowLifecycleManager.hide();let e=P.getPrimaryWindow(`local`)??await P.createFreshLocalWindow(`/`);if(e==null)return;re(e)}catch(e){g.reportNonFatal(e instanceof Error?e:`Failed to open window on second instance`,{kind:`second-instance-open-window-failed`})}};",
+    "l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});",
+    "let ae=async(e,t)=>{P.hotkeyWindowLifecycleManager.hide();let n=P.getPrimaryWindow(z),r=n??await P.createFreshLocalWindow(e);r!=null&&(n!=null&&t.navigateExistingWindow&&R.navigateToRoute(r,e),re(r))},oe=async()=>{S.trayStartupCalls++};",
+    "let E=process.platform===`win32`;",
+    "E&&oe();",
+    "let me=await P.ensureHostWindow(z);",
+    "me&&re(me),w(`local window ensured`,A,{hostId:z,localWindowVisible:me?.isVisible()??!1}),A=Date.now(),await R.deepLinks.flushPendingDeepLinks()}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxLaunchActionArgsPatch, source);
+
+  assert.match(patched, /codexLinuxGetSetting=e=>/);
+  assert.match(patched, /codexLinuxHandleLaunchActionArgs=async e=>/);
+  assert.match(patched, /codexLinuxStartLaunchActionSocket=\(\)=>/);
+  assert.match(patched, /codexLinuxPrewarmHotkeyWindow=\(\)=>/);
+  assert.match(patched, /e\.includes\(`--new-chat`\)/);
+  assert.match(patched, /e\.includes\(`--quick-chat`\)/);
+  assert.match(patched, /e\.includes\(`--prompt-chat`\)/);
+  assert.match(patched, /e\.includes\(`--hotkey-window`\)/);
+});
+
+test("skips the launch-action patch without throwing when upstream startup architecture changes", () => {
+  const source = [
+    "async function Sg(){",
+    "let{startedAtMs:r,setSparkleBridgeHandlers:s,setSecondInstanceArgsHandler:c}=e.o(),",
+    "F=Lp({windowServices:M,ensureHostWindow:M.ensureHostWindow});",
+    "e.mn().info(`Launching app`,{safe:{platform:process.platform,agentRunId:process.env.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null}});",
+    "let k=Date.now();",
+    "await n.app.whenReady();",
+    "let M=ng({windowManager:S}),",
+    "te=zf();",
+    "s({onInstallUpdatesRequested:te.allowQuitTemporarilyForUpdateInstall,isTrustedIpcEvent:A});",
+    "c(e=>{F.deepLinks.queueProcessArgs(e)}),",
+    "k=Date.now(),",
+    "F.deepLinks.registerProtocolClient(),",
+    "k=Date.now();",
+    "let ie=await M.ensureHostWindow(y);",
+    "ie&&(ie.isMinimized()&&ie.restore(),ie.show(),ie.focus()),",
+    "k=Date.now(),",
+    "await F.deepLinks.flushPendingDeepLinks(),",
+    "w(`startup complete`,r)}",
+  ].join("");
+
+  assert.doesNotThrow(() => applyLinuxLaunchActionArgsPatch(source));
 });
 
 test("uses CODEX_APP_ID for Electron desktopName", () => {

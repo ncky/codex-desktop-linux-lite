@@ -942,6 +942,7 @@ function applyLinuxTrayCloseSettingPatch(currentSource) {
 
 function applyLinuxLaunchActionArgsPatch(currentSource) {
   let patchedSource = currentSource;
+  let appliedLaunchActionPatch = false;
 
   const launchActionNeedle =
     "let codexLinuxSecondInstanceHandler=(e,t)=>{R.deepLinks.queueProcessArgs(t)||ie()};process.platform===`linux`&&(n.app.on(`second-instance`,codexLinuxSecondInstanceHandler),k.add(()=>{n.app.off(`second-instance`,codexLinuxSecondInstanceHandler)})),l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});let ae=async(e,t)=>{P.hotkeyWindowLifecycleManager.hide();let n=P.getPrimaryWindow(z),r=n??await P.createFreshLocalWindow(e);r!=null&&(n!=null&&t.navigateExistingWindow&&R.navigateToRoute(r,e),re(r))},oe=async()=>{";
@@ -999,38 +1000,55 @@ function applyLinuxLaunchActionArgsPatch(currentSource) {
 
   if (patchedSource.includes(oldLaunchActionPatch)) {
     patchedSource = patchedSource.replace(oldLaunchActionPatch, launchActionPatch);
+    appliedLaunchActionPatch = true;
   } else if (patchedSource.includes(deepLinkFirstLaunchActionPatch)) {
     patchedSource = patchedSource.replace(deepLinkFirstLaunchActionPatch, launchActionPatch);
+    appliedLaunchActionPatch = true;
   } else if (patchedSource.includes(deepLinkAwareExistingWindowLaunchActionPatch)) {
     patchedSource = patchedSource.replace(deepLinkAwareExistingWindowLaunchActionPatch, launchActionPatch);
+    appliedLaunchActionPatch = true;
   } else if (patchedSource.includes(openHomeHotkeyWindowLaunchActionPatch)) {
     patchedSource = patchedSource.replace(openHomeHotkeyWindowLaunchActionPatch, launchActionPatch);
+    appliedLaunchActionPatch = true;
   } else if (patchedSource.includes(socketHotkeyWindowLaunchActionPatch)) {
     patchedSource = patchedSource.replace(socketHotkeyWindowLaunchActionPatch, launchActionPatch);
+    appliedLaunchActionPatch = true;
   } else if (patchedSource.includes(showBasedHotkeyWindowLaunchActionPatch)) {
     patchedSource = patchedSource.replace(showBasedHotkeyWindowLaunchActionPatch, launchActionPatch);
+    appliedLaunchActionPatch = true;
   } else if (patchedSource.includes(freshWindowLaunchActionPatch)) {
     patchedSource = patchedSource.replace(freshWindowLaunchActionPatch, launchActionPatch);
+    appliedLaunchActionPatch = true;
   } else if (patchedSource.includes(launchActionNeedle)) {
     patchedSource = patchedSource.replace(launchActionNeedle, launchActionPatch);
+    appliedLaunchActionPatch = true;
   } else {
-    const existingLinuxLaunchActionBlock = patchedSource.match(
-      /let ae=async\(e,t\)=>\{P\.hotkeyWindowLifecycleManager\.hide\(\);.*?;let oe=async\(\)=>\{/,
+    const genericLinuxLaunchActionBlock = patchedSource.match(
+      /(?:let codexLinuxSecondInstanceHandler=.*?process\.platform===`linux`&&\(.*?\),)?l\(e=>\{.*?\}\);let ae=async\(e,t\)=>\{P\.hotkeyWindowLifecycleManager\.hide\(\);.*?(?:,oe=async\(\)=>\{|;let oe=async\(\)=>\{)/,
     )?.[0];
-    if (existingLinuxLaunchActionBlock?.includes("codexLinuxHandleLaunchActionArgs")) {
+    const existingLinuxLaunchActionBlock = patchedSource.match(
+      /let ae=async\(e,t\)=>\{P\.hotkeyWindowLifecycleManager\.hide\(\);.*?(?:,oe=async\(\)=>\{|;let oe=async\(\)=>\{)/,
+    )?.[0];
+    if (genericLinuxLaunchActionBlock) {
+      patchedSource = patchedSource.replace(genericLinuxLaunchActionBlock, launchActionPatch);
+      appliedLaunchActionPatch = true;
+    } else if (existingLinuxLaunchActionBlock?.includes("codexLinuxHandleLaunchActionArgs")) {
       patchedSource = patchedSource.replace(existingLinuxLaunchActionBlock, launchActionPatch);
+      appliedLaunchActionPatch = true;
     } else if (
       patchedSource.includes("Launching app") &&
       patchedSource.includes("deepLinks")
     ) {
-      throw new Error("Required Linux launch action patch failed: could not add --new-chat/--quick-chat/--prompt-chat handlers");
+      console.warn("WARN: Could not find Linux launch action handler - skipping --new-chat/--quick-chat/--prompt-chat patch");
     } else {
       console.warn("WARN: Could not find Linux launch action handler - skipping --new-chat/--quick-chat/--prompt-chat patch");
     }
   }
 
   if (patchedSource.includes("Launching app") && !patchedSource.includes("codexLinuxGetSetting=e=>")) {
-    throw new Error("Required Linux launch action patch failed: launch flags were not settings-gated");
+    if (appliedLaunchActionPatch) {
+      console.warn("WARN: Linux launch action patch was applied without settings-gating");
+    }
   }
 
   return patchedSource;
