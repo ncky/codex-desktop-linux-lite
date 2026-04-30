@@ -122,6 +122,7 @@ SCRIPT
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/scripts/lib/package-common.sh"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/computer-use-linux/Cargo.toml"
+    assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/updater/Cargo.toml"
     assert_file_exists "$pkg_root/opt/codex-desktop/update-builder/plugins/openai-bundled/plugins/computer-use/.mcp.json"
     assert_file_exists "$pkg_root/opt/codex-desktop/.codex-linux/codex-packaged-runtime.sh"
 }
@@ -178,7 +179,8 @@ SCRIPT
     assert_contains "$pkg_root/DEBIAN/control" "Package: codex-cua-lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "Name=Codex CUA Lab"
     assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "CHROME_DESKTOP=codex-cua-lab.desktop"
-    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "/usr/bin/codex-cua-lab"
+    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "/usr/bin/codex-cua-lab %u"
+    assert_contains "$pkg_root/usr/share/applications/codex-cua-lab.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
     assert_contains "$pkg_root/opt/codex-cua-lab/.codex-linux/codex-packaged-runtime.sh" 'CHROME_DESKTOP="codex-cua-lab.desktop"'
 }
 
@@ -343,20 +345,29 @@ PLIST
 
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
-    assert_contains "$REPO_DIR/install.sh" 'python3 -m http.server "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1'
-    assert_contains "$REPO_DIR/install.sh" "WEBVIEW_PID_FILE"
-    assert_contains "$REPO_DIR/install.sh" "owned_webview_server_pid"
-    assert_contains "$REPO_DIR/install.sh" "discover_webview_server_pid"
-    assert_contains "$REPO_DIR/install.sh" "Adopted existing webview server"
-    assert_contains "$REPO_DIR/install.sh" "detect_warm_start"
-    assert_contains "$REPO_DIR/install.sh" "send_warm_start_launch_action"
-    assert_contains "$REPO_DIR/install.sh" "CODEX_DESKTOP_LAUNCH_ACTION_SOCKET"
-    assert_contains "$REPO_DIR/install.sh" "APP_SETTINGS_FILE"
-    assert_contains "$REPO_DIR/install.sh" "linux_setting_enabled"
-    assert_contains "$REPO_DIR/install.sh" "codex-linux-warm-start-enabled"
-    assert_contains "$REPO_DIR/install.sh" "ADOPTED_WEBVIEW_PID"
-    assert_contains "$REPO_DIR/install.sh" "Reusing webview server pid="
-    python3 - "$REPO_DIR/install.sh" <<'PY'
+    assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
+    assert_contains "$REPO_DIR/install.sh" "MIN_BETTER_SQLITE3_VERSION_FOR_ELECTRON_41=\"12.9.0\""
+    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "better_sqlite3_build_version"
+    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "CODEX_ELECTRON_CACHE_DIR"
+    assert_contains "$REPO_DIR/scripts/lib/native-modules.sh" "--continue-at -"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" 'python3 -m http.server "$CODEX_LINUX_WEBVIEW_PORT" --bind 127.0.0.1'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "WEBVIEW_PID_FILE"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "owned_webview_server_pid"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "discover_webview_server_pid"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "Adopted existing webview server"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "detect_warm_start"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "send_warm_start_launch_action"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_DESKTOP_LAUNCH_ACTION_SOCKET"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "APP_SETTINGS_FILE"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "linux_setting_enabled"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "register_url_scheme_handlers"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "xdg-mime default"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "x-scheme-handler/"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "codex-browser-sidebar"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "codex-linux-warm-start-enabled"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "ADOPTED_WEBVIEW_PID"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "Reusing webview server pid="
+    python3 - "$REPO_DIR/launcher/start.sh.template" <<'PY'
 import re
 import sys
 
@@ -400,32 +411,36 @@ if "if adopt_existing_webview_server; then" not in ensure_body:
 if "Keeping the live app untouched" not in ensure_body:
     raise SystemExit("ensure_webview_server must not stop a live app server when validation fails")
 PY
-    assert_contains "$REPO_DIR/install.sh" "warm_start_ipc_sent"
-    assert_contains "$REPO_DIR/install.sh" "launcher_phase"
-    assert_contains "$REPO_DIR/install.sh" 'date +%s%N'
-    assert_contains "$REPO_DIR/install.sh" '10#$nanos / 1000000'
-    assert_contains "$REPO_DIR/install.sh" "CODEX_SYNC_CLI_PREFLIGHT"
-    assert_contains "$REPO_DIR/install.sh" "wait_for_webview_server"
-    assert_contains "$REPO_DIR/install.sh" "verify_webview_origin"
-    assert_contains "$REPO_DIR/install.sh" "Webview origin verified."
-    assert_contains "$REPO_DIR/install.sh" "hydrate_graphical_session_env"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "warm_start_ipc_sent"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "launcher_phase"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" 'date +%s%N'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" '10#$nanos / 1000000'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_SYNC_CLI_PREFLIGHT"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "wait_for_webview_server"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "verify_webview_origin"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "Webview origin verified."
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "hydrate_graphical_session_env"
     assert_not_contains "$REPO_DIR/install.sh" "pkill -f \"http.server 5175\""
-    assert_contains "$REPO_DIR/install.sh" "CODEX_WEBVIEW_PORT"
-    assert_contains "$REPO_DIR/install.sh" 'ELECTRON_RENDERER_URL="${ELECTRON_RENDERER_URL:-$WEBVIEW_ORIGIN/}"'
-    assert_contains "$REPO_DIR/install.sh" '--app-id="$CODEX_LINUX_APP_ID"'
-    assert_contains "$REPO_DIR/install.sh" "CODEX_APP_ID"
-    assert_contains "$REPO_DIR/install.sh" 'ELECTRON_OZONE_HINT="auto"'
-    assert_contains "$REPO_DIR/install.sh" '--ozone-platform-hint="$ELECTRON_OZONE_HINT"'
-    assert_contains "$REPO_DIR/install.sh" "--disable-gpu-sandbox"
-    assert_contains "$REPO_DIR/install.sh" "--force-renderer-accessibility"
-    assert_contains "$REPO_DIR/install.sh" "PACKAGED_RUNTIME_HELPER"
-    assert_contains "$REPO_DIR/install.sh" "CODEX_INSTALL_ALLOW_RUNNING"
-    assert_contains "$REPO_DIR/install.sh" "assert_install_target_not_running"
-    assert_contains "$REPO_DIR/install.sh" "find_running_install_target_pid"
-    assert_contains "$REPO_DIR/install.sh" "Codex Desktop is currently running from"
-    assert_contains "$REPO_DIR/install.sh" "prompt_install_missing_cli"
-    assert_contains "$REPO_DIR/install.sh" "Install it now? \\[Y/n\\]"
-    assert_contains "$REPO_DIR/install.sh" "is_interactive_terminal"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_WEBVIEW_PORT"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" 'ELECTRON_RENDERER_URL="${ELECTRON_RENDERER_URL:-$WEBVIEW_ORIGIN/}"'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" '--app-id="$CODEX_LINUX_APP_ID"'
+    assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "CODEX_APP_ID"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" 'ELECTRON_OZONE_HINT="auto"'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" '--ozone-platform-hint="$ELECTRON_OZONE_HINT"'
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "--disable-gpu-sandbox"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "--force-renderer-accessibility"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "PACKAGED_RUNTIME_HELPER"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "--allow-install-missing"
+    assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "CODEX_INSTALL_ALLOW_RUNNING"
+    assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "assert_install_target_not_running"
+    assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "find_running_install_target_pid"
+    assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "Codex Desktop is currently running from"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "prompt_install_missing_cli"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "prompt-install-cli"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "Install it now? \\[Y/n\\]"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "is_interactive_terminal"
+    assert_contains "$REPO_DIR/updater/src/app.rs" "kdialog"
+    assert_contains "$REPO_DIR/updater/src/app.rs" "zenity"
     assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "CHROME_DESKTOP"
     assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "codex-update-manager-launch-check"
     assert_contains "$REPO_DIR/packaging/linux/codex-packaged-runtime.sh" "codex-update-manager check-now --if-stale"
@@ -442,6 +457,10 @@ PY
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "stage_common_package_files"
     assert_contains "$REPO_DIR/scripts/build-rpm.sh" "PACKAGED_RUNTIME_SOURCE"
     assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "BAMF_DESKTOP_FILE_HINT"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "/usr/bin/codex-desktop %u"
+    assert_contains "$REPO_DIR/packaging/linux/codex-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "@HOME@/.local/bin/codex-desktop %U"
+    assert_contains "$REPO_DIR/contrib/user-local-install/files/.local/share/applications/codex-desktop.desktop" "MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;"
 }
 
 test_side_by_side_launcher_identity() {

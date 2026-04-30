@@ -324,7 +324,7 @@ make clean-state
 3. It extracts and patches `app.asar` (Linux File Manager integration, tray, single-instance handoff, browser-annotation fixes, Computer Use platform gate, Linux opaque background, etc.) — every patch fail-soft, with regex-driven needles
 4. It rebuilds native Node modules (`better-sqlite3`, `node-pty`) for Linux via `@electron/rebuild`
 5. It downloads the matching Linux Electron runtime (cached under `~/.cache/codex-desktop/electron/`)
-6. It writes the Linux launcher into `codex-app/start.sh`
+6. It writes the Linux launcher into `codex-app/start.sh` (body sourced from `launcher/start.sh.template`)
 7. `scripts/build-{deb,rpm,pacman}.sh` packages `codex-app/` into a native artifact
 8. The installed package provides `codex-update-manager` plus a `systemd --user` service unit
 9. The updater watches for newer upstream DMGs and rebuilds future Linux packages locally
@@ -344,7 +344,7 @@ The current evaluation for a future Rust replacement of the local webview server
 After changing installer, packaging, or updater logic:
 
 ```bash
-bash -n install.sh scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/install-deps.sh
+bash -n install.sh scripts/lib/*.sh launcher/start.sh.template scripts/build-deb.sh scripts/build-rpm.sh scripts/build-pacman.sh scripts/install-deps.sh
 node --check scripts/patch-linux-window-ui.js
 node --test scripts/patch-linux-window-ui.test.js
 bash tests/scripts_smoke.sh
@@ -378,7 +378,7 @@ pacman -Qlp dist/codex-desktop-*.pkg.tar.zst | sed -n '1,40p'
 
 ## Versioning
 
-`codex-update-manager` current crate version: `0.5.0`
+`codex-update-manager` current crate version: `0.6.0`
 
 SemVer policy:
 

@@ -17,7 +17,23 @@ The current working flow is:
 ## Source Of Truth
 
 - `install.sh`
-  Main installer and launcher generator.
+  Top-level installer entrypoint. Sources the `scripts/lib/*.sh` build-pipeline modules and emits `codex-app/start.sh` from the launcher template.
+- `launcher/start.sh.template`
+  Runtime launcher body. Concatenated by `install.sh::create_start_script` after a short prelude that bakes in the install-time app identity (`CODEX_LINUX_APP_ID`, display name, default webview port). Edit this file for any launcher behavior change — webview server lifecycle, warm-start handoff, CLI preflight, GUI prompts, URL-scheme handling, ydotool helpers.
+- `scripts/lib/install-helpers.sh`
+  Argument parsing, dependency checks, identity validation, install-dir preparation, color/log helpers, `shell_quote`.
+- `scripts/lib/process-detection.sh`
+  Running-app detection used to refuse overwriting a live install. Skips Electron utility helpers via `/proc/<pid>/cmdline` `--type=` heuristic.
+- `scripts/lib/dmg.sh`
+  DMG download, extraction, and Electron-version detection from upstream metadata.
+- `scripts/lib/native-modules.sh`
+  Native-module rebuild for Linux (`better-sqlite3`, `node-pty`) plus Electron download and cache.
+- `scripts/lib/asar-patch.sh`
+  Drives the Node patcher (`scripts/patch-linux-window-ui.js`) over `app.asar`.
+- `scripts/lib/webview-install.sh`
+  Webview asset extraction and final `codex-app/` install layout.
+- `scripts/lib/bundled-plugins.sh`
+  Linux Computer Use backend build, plugin staging, and bundled-plugin marketplace generation.
 - `scripts/build-deb.sh`
   Builds the `.deb` from the already-generated `codex-app/`.
 - `scripts/build-rpm.sh`
@@ -91,7 +107,7 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
 - Launcher and `nvm`:
   GUI launchers often do not inherit the user's shell `PATH`. The generated `start.sh` explicitly searches for `codex`, including common `nvm` locations.
 - CLI preflight:
-  Before Electron launches, the generated launcher asks `codex-update-manager` to verify the installed Codex CLI, install it automatically if it is missing, and update it if the npm package is newer. The check is best-effort: it uses a 1-hour cooldown for npm registry lookups, falls back to `npm install -g --prefix ~/.local` if a global install fails, and warns instead of blocking app launch when the refresh attempt does not succeed.
+  Before Electron launches, the generated launcher asks `codex-update-manager` to verify the installed Codex CLI, prompt to install it when it is missing, and update it if the npm package is newer. Terminal launches prompt inline; GUI launches prefer `kdialog` on KDE/Plasma, otherwise `zenity`, before falling back to an actionable desktop notification. The check is best-effort: it uses a 1-hour cooldown for npm registry lookups, caches local CLI version reads to keep startup light, falls back to `npm install -g --prefix ~/.local` if a global install fails, and warns instead of blocking app launch when the refresh attempt does not succeed.
 - ASAR patches are independent and fail-soft:
   `scripts/patch-linux-window-ui.js` is structured as a chain of small, independent patch functions called from `patchMainBundleSource`. Each one has its own regex-driven needles, an idempotency check, and a `console.warn` fall-back when the upstream bundle drifts. Current patches: `applyLinuxWindowOptionsPatch`, `applyLinuxMenuPatch`, `applyLinuxSetIconPatch`, `applyLinuxOpaqueBackgroundPatch`, `applyLinuxFileManagerPatch`, `applyLinuxTrayPatch`, `applyLinuxSingleInstancePatch`, `applyLinuxComputerUsePluginGatePatch`, `applyLinuxTrayCloseSettingPatch`, `applyLinuxSettingsPersistencePatch`, `applyLinuxLaunchActionArgsPatch`, `applyLinuxHotkeyWindowPrewarmPatch`, `applyBrowserAnnotationScreenshotPatch`. Plus `patchKeybindsSettingsAssets` (transactional — atomic, fail-soft via `WARN: Keybinds settings patch skipped: ...`) and `patchCommentPreloadBundle` for browser annotation fixes. When adding a new needle, mirror this pattern — never `throw`.
 - Linux file manager integration:
@@ -132,7 +148,7 @@ Do not assume `codex-app/` is pristine. If behavior differs from `install.sh`, p
 
 ## Crate Versioning
 
-- Current updater crate version: `0.5.0`
+- Current updater crate version: `0.6.0`
 - Bump `patch` for fixes, docs, and maintenance-only updates.
 - Bump `minor` for compatible feature additions.
 - Bump `major` for incompatible CLI, persisted-state, or install-flow changes.
@@ -238,6 +254,8 @@ After editing installer or packaging logic, validate at least:
 
 ```bash
 bash -n install.sh
+bash -n scripts/lib/*.sh
+bash -n launcher/start.sh.template
 bash -n scripts/build-deb.sh
 bash -n scripts/build-rpm.sh
 bash -n scripts/build-pacman.sh
@@ -279,8 +297,8 @@ sed -n '1,160p' ~/.local/state/codex-update-manager/service.log
 
 ## Editing Guidance
 
-- Prefer changing `install.sh` over manually patching `codex-app/start.sh`, unless you are making a temporary local test.
-- Keep native-package-only launcher behavior in `packaging/linux/codex-packaged-runtime.sh`; `install.sh` should stay generic and only load that helper optionally.
-- If you update the launcher template inside `install.sh`, regenerate `codex-app/` or keep `codex-app/start.sh` aligned before building a new package.
+- Prefer changing `launcher/start.sh.template` (for runtime/launcher behavior) or `scripts/lib/*.sh` (for build-pipeline behavior) over manually patching `codex-app/start.sh`, unless you are making a temporary local test. `install.sh` itself stays small — it's just orchestration and the prelude that bakes install-time identity into the generated launcher.
+- Keep native-package-only launcher behavior in `packaging/linux/codex-packaged-runtime.sh`; `launcher/start.sh.template` should stay generic and only load that helper optionally.
+- If you update `launcher/start.sh.template`, regenerate `codex-app/` or keep `codex-app/start.sh` aligned before building a new package.
 - Keep packaging changes in `packaging/linux/`, `scripts/build-deb.sh`, `scripts/build-rpm.sh`, and `scripts/build-pacman.sh`; avoid hardcoding distro-specific behavior outside those files unless necessary.
 - Keep `scripts/lib/package-common.sh` aligned with both builders when you add or remove packaged files from the shared runtime payload.
