@@ -3,7 +3,7 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.6.0] - 2026-04-27
+## [0.6.0] - 2026-04-30
 
 ### Added
 
