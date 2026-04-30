@@ -343,9 +343,15 @@ fn prompt_install_cli(
     cli_path: Option<PathBuf>,
 ) -> Result<PromptInstallCliOutcome> {
     if let Some(path) = cli_path
-        .clone()
-        .filter(|path| path.is_file())
-        .or_else(|| state.cli_path.clone().filter(|path| path.is_file()))
+        .as_deref()
+        .and_then(|path| codex_cli::resolve_cli_path(Some(path)))
+        .or_else(|| {
+            state
+                .cli_path
+                .as_deref()
+                .and_then(|path| codex_cli::resolve_cli_path(Some(path)))
+        })
+        .or_else(|| codex_cli::resolve_cli_path(None))
     {
         return Ok(PromptInstallCliOutcome::Installed(path));
     }
@@ -1118,13 +1124,14 @@ mod tests {
         };
         paths.ensure_dirs()?;
 
-        let first_lock = try_acquire_check_lock(&paths)?;
-        let second_lock = try_acquire_check_lock(&paths)?;
+        {
+            let first_lock = try_acquire_check_lock(&paths)?;
+            let second_lock = try_acquire_check_lock(&paths)?;
 
-        assert!(first_lock.is_some());
-        assert!(second_lock.is_none());
+            assert!(first_lock.is_some());
+            assert!(second_lock.is_none());
+        }
 
-        drop(first_lock);
         let reacquired_lock = try_acquire_check_lock(&paths)?;
 
         assert!(reacquired_lock.is_some());
@@ -1217,18 +1224,95 @@ mod tests {
     #[test]
     fn pkexec_authentication_failures_are_retryable() -> Result<()> {
         for code in [126, 127] {
-            let status = std::process::Command::new("sh")
+            let status = std::process::Command::new("/bin/sh")
                 .arg("-c")
                 .arg(format!("exit {code}"))
                 .status()?;
             assert!(pkexec_authentication_was_not_obtained(&status));
         }
 
-        let status = std::process::Command::new("sh")
+        let status = std::process::Command::new("/bin/sh")
             .arg("-c")
             .arg("exit 1")
             .status()?;
         assert!(!pkexec_authentication_was_not_obtained(&status));
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_install_cli_does_not_treat_non_executable_file_as_installed() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let paths = RuntimePaths {
+            config_file: temp.path().join("config/config.toml"),
+            state_file: temp.path().join("state/state.json"),
+            log_file: temp.path().join("state/service.log"),
+            cache_dir: temp.path().join("cache"),
+            state_dir: temp.path().join("state"),
+            config_dir: temp.path().join("config"),
+        };
+        paths.ensure_dirs()?;
+
+        let original_display = std::env::var_os("DISPLAY");
+        let original_wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+        let original_dbus_session_bus_address = std::env::var_os("DBUS_SESSION_BUS_ADDRESS");
+        let original_xdg_runtime_dir = std::env::var_os("XDG_RUNTIME_DIR");
+        let original_path = std::env::var_os("PATH");
+        let original_home = std::env::var_os("HOME");
+        let original_nvm_dir = std::env::var_os("NVM_DIR");
+
+        std::env::remove_var("DISPLAY");
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::remove_var("DBUS_SESSION_BUS_ADDRESS");
+        std::env::remove_var("XDG_RUNTIME_DIR");
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::set_var("HOME", temp.path());
+        std::env::remove_var("NVM_DIR");
+
+        let invalid_cli_path = temp.path().join("codex.txt");
+        std::fs::write(&invalid_cli_path, b"not executable")?;
+
+        let mut state = PersistedState::new(true);
+        state.cli_path = Some(invalid_cli_path);
+
+        let outcome = prompt_install_cli(&mut state, &paths, None)?;
+
+        if let Some(value) = original_display {
+            std::env::set_var("DISPLAY", value);
+        } else {
+            std::env::remove_var("DISPLAY");
+        }
+        if let Some(value) = original_wayland_display {
+            std::env::set_var("WAYLAND_DISPLAY", value);
+        } else {
+            std::env::remove_var("WAYLAND_DISPLAY");
+        }
+        if let Some(value) = original_dbus_session_bus_address {
+            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", value);
+        } else {
+            std::env::remove_var("DBUS_SESSION_BUS_ADDRESS");
+        }
+        if let Some(value) = original_xdg_runtime_dir {
+            std::env::set_var("XDG_RUNTIME_DIR", value);
+        } else {
+            std::env::remove_var("XDG_RUNTIME_DIR");
+        }
+        if let Some(value) = original_path {
+            std::env::set_var("PATH", value);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_nvm_dir {
+            std::env::set_var("NVM_DIR", value);
+        } else {
+            std::env::remove_var("NVM_DIR");
+        }
+
+        assert_eq!(outcome, PromptInstallCliOutcome::NoBackend);
         Ok(())
     }
 
