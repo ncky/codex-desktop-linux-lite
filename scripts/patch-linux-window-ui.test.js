@@ -9,11 +9,13 @@ const test = require("node:test");
 const {
   applyLinuxComputerUsePluginGatePatch,
   applyLinuxFileManagerPatch,
+  applyLinuxHotkeyWindowPrewarmPatch,
   applyLinuxLaunchActionArgsPatch,
   applyLinuxMenuPatch,
   applyLinuxOpaqueBackgroundPatch,
   applyLinuxSetIconPatch,
   applyLinuxSingleInstancePatch,
+  applyLinuxTrayCloseSettingPatch,
   applyLinuxTrayPatch,
   applyLinuxWindowOptionsPatch,
   patchMainBundleSource,
@@ -28,6 +30,8 @@ const fileManagerBundle =
   "var lu=jl({id:`fileManager`,label:`Finder`,icon:`apps/finder.png`,kind:`fileManager`,darwin:{detect:()=>`open`,args:e=>il(e)},win32:{label:`File Explorer`,icon:`apps/file-explorer.png`,detect:uu,args:e=>il(e),open:async({path:e})=>du(e)}});function uu(){}";
 const alreadyOpaqueBackgroundBundle =
   "process.platform===`linux`?{backgroundColor:e?t:n,backgroundMaterial:null}:{backgroundColor:r,backgroundMaterial:null}";
+const opaqueBackgroundBundleWithDriftingGw =
+  "var cM=`#00000000`,lM=`#000000`,uM=`#f9f9f9`;function OM(e){return e===`avatarOverlay`||e===`browserCommentPopup`}function jM({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return e===`win32`&&!OM(t)?n?{backgroundColor:r?lM:uM,backgroundMaterial:`none`}:{backgroundColor:cM,backgroundMaterial:`mica`}:{backgroundColor:cM,backgroundMaterial:null}}function gw(e){return e.page==null?e.snapshot.url:mw(e.page)}";
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -63,6 +67,13 @@ function computerUseGateBundleFixture() {
   ].join("");
 }
 
+function currentLaunchActionBundleFixture() {
+  return [
+    "const e={gr:e=>({default:e,...e})};let n=require(`electron`);let i=require(`node:path`);i=e.gr(i);let o=require(`node:fs`);o=e.gr(o);let f=require(`node:net`);f=e.gr(f);",
+    "async function CN(){let{setSecondInstanceArgsHandler:l}=t.y(),g={reportNonFatal(){}},k=new t.In;k.add(x);let j={globalState:{get(){return true}},repoRoot:`/tmp`,codexHome:`/tmp`},M={hotkeyWindowLifecycleManager:{hide(){},ensureHotkeyWindowController(){}},getPrimaryWindow(){},createFreshLocalWindow(){},ensureHostWindow(){},windowManager:{sendMessageToWindow(){}}},B=`local`,R={desktopNotificationManager:{dismissByNavigationPath(){}},getOrCreateContext(){},localHost:B},z={deepLinks:{queueProcessArgs(){},flushPendingDeepLinks(){}},navigateToRoute(){}};let A=Date.now(),w=()=>{},ae=e=>{e.isMinimized()&&e.restore(),e.show(),e.focus()},oe=async()=>{try{M.hotkeyWindowLifecycleManager.hide();let e=M.getPrimaryWindow(`local`)??await M.createFreshLocalWindow(`/`);if(e==null)return;ae(e)}catch(e){g.reportNonFatal(e instanceof Error?e:`Failed to open window on second instance`,{kind:`second-instance-open-window-failed`})}};l(e=>{z.deepLinks.queueProcessArgs(e)||oe()});let se=async(e,t)=>{M.hotkeyWindowLifecycleManager.hide();let n=M.getPrimaryWindow(B),r=n??await M.createFreshLocalWindow(e);r!=null&&(R.desktopNotificationManager.dismissByNavigationPath(e),n!=null&&t.navigateExistingWindow&&z.navigateToRoute(r,e),ae(r))};let ce=async()=>{};E&&ce();let be=await M.ensureHostWindow(B);be&&ae(be),w(`local window ensured`,A,{hostId:B,localWindowVisible:be?.isVisible()??!1}),A=Date.now(),await z.deepLinks.flushPendingDeepLinks();}",
+  ].join("");
+}
+
 test("adds Linux file manager support without relying on exact minified variable names", () => {
   const source = `${mainBundlePrefix}${fileManagerBundle}`;
 
@@ -86,6 +97,16 @@ test("adds Linux menu hiding next to Windows removeMenu calls", () => {
 test("recognizes already-applied Linux opaque background patch", () => {
   const patched = applyPatchTwice(applyLinuxOpaqueBackgroundPatch, alreadyOpaqueBackgroundBundle);
   assert.equal(patched, alreadyOpaqueBackgroundBundle);
+});
+
+test("uses the local transparent appearance predicate for Linux opaque backgrounds", () => {
+  const patched = applyPatchTwice(
+    applyLinuxOpaqueBackgroundPatch,
+    opaqueBackgroundBundleWithDriftingGw,
+  );
+
+  assert.match(patched, /e===`linux`&&!OM\(t\)\?\{backgroundColor:r\?lM:uM/);
+  assert.doesNotMatch(patched, /process\.platform===`linux`&&!gw\(t\)/);
 });
 
 test("adds Linux window icon handling when an icon asset is available", () => {
@@ -147,6 +168,49 @@ test("adds Linux tray support including the platform guard", () => {
   assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&oe\(\);/);
 });
 
+test("adds Linux tray support for current minified window and startup identifiers", () => {
+  const source = [
+    "v&&j.on(`close`,e=>{this.persistPrimaryWindowBounds(j,f);let t=this.getPrimaryWindows(f).some(e=>e!==j);if(process.platform===`win32`&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),j.hide();return}});",
+    "async function eN(e){let t=await Ww(e.buildFlavor,e.repoRoot),r=new n.Tray(t.defaultIcon);return r}",
+    "let ce$=async()=>{O=!0;try{await eN({buildFlavor:a,repoRoot:j.repoRoot})}catch(e){O=!1}};E&&ce$();",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
+
+  assert.match(patched, /\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`/);
+  assert.match(patched, /e\.preventDefault\(\),j\.hide\(\);return/);
+  assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&ce\$\(\);/);
+});
+
+test("scopes dynamic tray startup matching to the tray initializer", () => {
+  const source = [
+    "async function aa(e){return e.buildFlavor}",
+    "let startOther=async()=>{A=!0;try{await aa({buildFlavor:a})}catch(e){A=!1}};U&&startOther();",
+    "async function eN(e){let t=await Ww(e.buildFlavor,e.repoRoot),r=new n.Tray(t.defaultIcon);return r}",
+    "let ce$=async()=>{O=!0;try{await eN({buildFlavor:a,repoRoot:j.repoRoot})}catch(e){O=!1}};E&&ce$();",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
+
+  assert.match(patched, /U&&startOther\(\);/);
+  assert.doesNotMatch(patched, /\(U\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&startOther\(\);/);
+  assert.match(patched, /\(E\|\|process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)\)&&ce\$\(\);/);
+});
+
+test("scopes close-to-tray already-patched detection to the handler", () => {
+  const source = [
+    "let unrelated=(process.platform===`win32`||process.platform===`linux`)&&x===`local`;",
+    "v&&j.on(`close`,e=>{this.persistPrimaryWindowBounds(j,f);let t=this.getPrimaryWindows(f).some(e=>e!==j);if(process.platform===`win32`&&f===`local`&&!this.isAppQuitting&&this.options.canHideLastLocalWindowToTray?.()===!0&&!t){e.preventDefault(),j.hide();return}});",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, null);
+
+  assert.match(
+    patched,
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&f===`local`&&!this\.isAppQuitting&&this\.options\.canHideLastLocalWindowToTray\?\.\(\)===!0&&!t\)\{e\.preventDefault\(\),j\.hide\(\);return\}/,
+  );
+});
+
 test("adds Linux single-instance lock and second-instance handoff", () => {
   const patched = applyPatchTwice(applyLinuxSingleInstancePatch, singleInstanceBundleFixture());
 
@@ -155,6 +219,118 @@ test("adds Linux single-instance lock and second-instance handoff", () => {
   assert.match(patched, /codexLinuxSecondInstanceHandler/);
   assert.match(patched, /n\.app\.on\(`second-instance`,codexLinuxSecondInstanceHandler\)/);
   assert.match(patched, /n\.app\.off\(`second-instance`,codexLinuxSecondInstanceHandler\)/);
+});
+
+test("recognizes bootstrap-owned single-instance handoff in current bundles", () => {
+  const source = "let{setSecondInstanceArgsHandler:l}=t.y();l(e=>{z.deepLinks.queueProcessArgs(e)||oe()});";
+  const patched = applyPatchTwice(applyLinuxSingleInstancePatch, source);
+
+  assert.equal(patched, source);
+});
+
+test("adds Linux launch actions through current setSecondInstanceArgsHandler bundles", () => {
+  const launchPatched = applyPatchTwice(
+    applyLinuxLaunchActionArgsPatch,
+    currentLaunchActionBundleFixture(),
+  );
+  const prewarmPatched = applyPatchTwice(applyLinuxHotkeyWindowPrewarmPatch, launchPatched);
+
+  assert.match(launchPatched, /codexLinuxGetSetting=e=>process\.platform!==`linux`\|\|j\.globalState\.get\(e\)!==!1/);
+  assert.match(launchPatched, /codexLinuxStartLaunchActionSocket=\(\)=>/);
+  assert.match(launchPatched, /f\.default\.createServer/);
+  assert.match(launchPatched, /o\.mkdirSync\(i\.default\.dirname\(e\)/);
+  assert.match(launchPatched, /R\.desktopNotificationManager\.dismissByNavigationPath\(e\)/);
+  assert.match(launchPatched, /codexLinuxHasDeepLink\(e\)&&z\.deepLinks\.queueProcessArgs\(e\)/);
+  assert.match(launchPatched, /e\.includes\(`--prompt-chat`\)/);
+  assert.match(launchPatched, /e\.includes\(`--quick-chat`\)/);
+  assert.match(launchPatched, /e\.includes\(`--new-chat`\)/);
+  assert.match(launchPatched, /process\.platform===`linux`&&codexLinuxStartLaunchActionSocket\(\);l\(e=>/);
+  assert.doesNotMatch(launchPatched, /l\(e=>\{z\.deepLinks\.queueProcessArgs\(e\)\|\|oe\(\)\}\)/);
+  assert.match(
+    prewarmPatched,
+    /process\.platform===`linux`&&codexLinuxPrewarmHotkeyWindow\(\),A=Date\.now\(\),await z\.deepLinks\.flushPendingDeepLinks\(\)/,
+  );
+});
+
+test("adds Linux launch actions when captured window identifiers contain dollar signs", () => {
+  const source = currentLaunchActionBundleFixture().replace(
+    "let se=async(e,t)=>{M.hotkeyWindowLifecycleManager.hide();let n=M.getPrimaryWindow(B),r=n??await M.createFreshLocalWindow(e);r!=null&&(R.desktopNotificationManager.dismissByNavigationPath(e),n!=null&&t.navigateExistingWindow&&z.navigateToRoute(r,e),ae(r))};",
+    "let se=async(e,t)=>{M.hotkeyWindowLifecycleManager.hide();let n=M.getPrimaryWindow(B),r$=n??await M.createFreshLocalWindow(e);r$!=null&&(R.desktopNotificationManager.dismissByNavigationPath(e),n!=null&&t.navigateExistingWindow&&z.navigateToRoute(r$,e),ae(r$))};",
+  );
+
+  const patched = applyPatchTwice(applyLinuxLaunchActionArgsPatch, source);
+
+  assert.match(patched, /codexLinuxHandleLaunchActionArgs/);
+  assert.match(patched, /z\.navigateToRoute\(r\$,e\),ae\(r\$\)/);
+});
+
+test("skips the launch-action patch without throwing when upstream startup architecture changes", () => {
+  const source = [
+    "async function Sg(){",
+    "let{startedAtMs:r,setSparkleBridgeHandlers:s,setSecondInstanceArgsHandler:c}=e.o(),",
+    "F=Lp({windowServices:M,ensureHostWindow:M.ensureHostWindow});",
+    "e.mn().info(`Launching app`,{safe:{platform:process.platform,agentRunId:process.env.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null}});",
+    "let k=Date.now();",
+    "await n.app.whenReady();",
+    "let M=ng({windowManager:S}),",
+    "te=zf();",
+    "s({onInstallUpdatesRequested:te.allowQuitTemporarilyForUpdateInstall,isTrustedIpcEvent:A});",
+    "c(e=>{F.deepLinks.queueProcessArgs(e)}),",
+    "k=Date.now(),",
+    "F.deepLinks.registerProtocolClient(),",
+    "k=Date.now();",
+    "let ie=await M.ensureHostWindow(y);",
+    "ie&&(ie.isMinimized()&&ie.restore(),ie.show(),ie.focus()),",
+    "k=Date.now(),",
+    "await F.deepLinks.flushPendingDeepLinks(),",
+    "w(`startup complete`,r)}",
+  ].join("");
+
+  assert.doesNotThrow(() => applyLinuxLaunchActionArgsPatch(source));
+});
+
+test("gates current close-to-tray setting through the captured global state", () => {
+  const source = "let j=KD({moduleDir:__dirname});let M=FM({buildFlavor:a,globalState:j.globalState,canHideLastLocalWindowToTray:()=>O,disposables:k});t.Mr().info(`Launching app`);";
+  const patched = applyPatchTwice(applyLinuxTrayCloseSettingPatch, source);
+
+  assert.match(
+    patched,
+    /canHideLastLocalWindowToTray:\(\)=>O&&\(process\.platform!==`linux`\|\|j\.globalState\.get\(`codex-linux-system-tray-enabled`\)!==!1\),disposables:k/,
+  );
+  assert.doesNotMatch(patched, /M\.globalState\.get/);
+});
+
+test("does not treat unrelated Linux setting references as close-to-tray patched", () => {
+  const source = [
+    "let j=KD({moduleDir:__dirname});",
+    "let M=FM({buildFlavor:a,globalState:j.globalState,canHideLastLocalWindowToTray:()=>O,disposables:k});",
+    "let codexLinuxGetSetting=e=>process.platform!==`linux`||j.globalState.get(`codex-linux-system-tray-enabled`)!==!1;",
+    "t.Mr().info(`Launching app`);",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayCloseSettingPatch, source);
+
+  assert.match(
+    patched,
+    /canHideLastLocalWindowToTray:\(\)=>O&&\(process\.platform!==`linux`\|\|j\.globalState\.get\(`codex-linux-system-tray-enabled`\)!==!1\),disposables:k/,
+  );
+});
+
+test("chooses the nearest globalState alias for close-to-tray settings", () => {
+  const source = [
+    "let stale={globalState:{get(){return false}}};",
+    "let j=KD({moduleDir:__dirname});",
+    "let M=FM({buildFlavor:a,globalState:j.globalState,canHideLastLocalWindowToTray:()=>O,disposables:k});",
+    "t.Mr().info(`Launching app`);",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayCloseSettingPatch, source);
+
+  assert.match(
+    patched,
+    /canHideLastLocalWindowToTray:\(\)=>O&&\(process\.platform!==`linux`\|\|j\.globalState\.get\(`codex-linux-system-tray-enabled`\)!==!1\),disposables:k/,
+  );
+  assert.doesNotMatch(patched, /stale\.globalState\.get\(`codex-linux-system-tray-enabled`\)/);
 });
 
 test("allows bundled Computer Use on Linux as well as macOS", () => {
@@ -182,65 +358,90 @@ test("adds installWhenMissing to an already Linux-enabled Computer Use gate", ()
   assert.equal((patched.match(/installWhenMissing:!0,name:tn/g) || []).length, 1);
 });
 
-test("upgrades the base launch-action handler to the Linux warm-start patch", () => {
+test("keeps scanning Computer Use gates after an already patched match", () => {
   const source = [
-    "async function uT(){",
-    "let k=new t.jn;",
-    "t.Er().info(`Launching app`,{safe:{agentRunId:process.env.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null}});",
-    "let A=Date.now();",
-    "await n.app.whenReady();",
-    "let w=(...e)=>{S.traceCalls.push(e)},",
-    "M={globalState:S.globalState,repoRoot:`/tmp/codex-smoke`},",
-    "z=`local`,",
-    "R={deepLinks:{queueProcessArgs(e){S.queueArgs.push(e);return Array.isArray(e)&&e.some(e=>{let t=String(e);return t.startsWith(`codex://`)||t.startsWith(`codex-browser-sidebar://`)})},flushPendingDeepLinks(){S.flushPendingDeepLinksCalls++;return Promise.resolve()}},navigateToRoute(e,t){S.navigateCalls.push({windowId:e.id,path:t})}},",
-    "P={windowManager:{sendMessageToWindow(e,t){S.messages.push({windowId:e.id,message:t})}},hotkeyWindowLifecycleManager:{hide(){S.hideCalls++},show(){S.showCalls++;return S.hotkeyWindowShowResult},ensureHotkeyWindowController(){S.ensureHotkeyWindowControllerCalls++;return S.hotkeyWindowController}},getPrimaryWindow(){return S.primaryWindow},createFreshLocalWindow(e){S.createFreshLocalWindowCalls.push(e);return S.createdWindow},ensureHostWindow(e){S.ensureHostWindowCalls.push(e);return S.primaryWindow??S.createdWindow}},",
-    "g={reportNonFatal(e,t){S.errors.push({error:String(e),meta:t})}},",
-    "l=e=>{S.initialHandler=e},",
-    "re=e=>{S.focusCalls.push(e.id);e.isMinimized()&&e.restore(),e.show(),e.focus()},",
-    "ie=async()=>{S.ieCalls++;try{P.hotkeyWindowLifecycleManager.hide();let e=P.getPrimaryWindow(`local`)??await P.createFreshLocalWindow(`/`);if(e==null)return;re(e)}catch(e){g.reportNonFatal(e instanceof Error?e:`Failed to open window on second instance`,{kind:`second-instance-open-window-failed`})}};",
-    "l(e=>{R.deepLinks.queueProcessArgs(e)||ie()});",
-    "let ae=async(e,t)=>{P.hotkeyWindowLifecycleManager.hide();let n=P.getPrimaryWindow(z),r=n??await P.createFreshLocalWindow(e);r!=null&&(n!=null&&t.navigateExistingWindow&&R.navigateToRoute(r,e),re(r))},oe=async()=>{S.trayStartupCalls++};",
-    "let E=process.platform===`win32`;",
-    "E&&oe();",
-    "let me=await P.ensureHostWindow(z);",
-    "me&&re(me),w(`local window ensured`,A,{hostId:z,localWindowVisible:me?.isVisible()??!1}),A=Date.now(),await R.deepLinks.flushPendingDeepLinks()}",
+    "var tn=`computer-use`;",
+    "var $n=[{installWhenMissing:!0,name:tn,isEnabled:({features:e,platform:t})=>(t===`darwin`||t===`linux`)&&e.computerUse,migrate:on},{name:tn,isEnabled:({features:n,platform:r})=>r===`darwin`&&n.computerUse,migrate:wn}];",
   ].join("");
 
-  const patched = applyPatchTwice(applyLinuxLaunchActionArgsPatch, source);
+  const patched = applyPatchTwice(applyLinuxComputerUsePluginGatePatch, source);
 
-  assert.match(patched, /codexLinuxGetSetting=e=>/);
-  assert.match(patched, /codexLinuxHandleLaunchActionArgs=async e=>/);
-  assert.match(patched, /codexLinuxStartLaunchActionSocket=\(\)=>/);
-  assert.match(patched, /codexLinuxPrewarmHotkeyWindow=\(\)=>/);
-  assert.match(patched, /e\.includes\(`--new-chat`\)/);
-  assert.match(patched, /e\.includes\(`--quick-chat`\)/);
-  assert.match(patched, /e\.includes\(`--prompt-chat`\)/);
-  assert.match(patched, /e\.includes\(`--hotkey-window`\)/);
+  assert.match(
+    patched,
+    /name:tn,isEnabled:\(\{features:n,platform:r\}\)=>\(r===`darwin`\|\|r===`linux`\)&&n\.computerUse,migrate:wn/,
+  );
+  assert.equal((patched.match(/installWhenMissing:!0,name:tn/g) || []).length, 2);
+  assert.doesNotMatch(patched, /r===`darwin`&&n\.computerUse/);
 });
 
-test("skips the launch-action patch without throwing when upstream startup architecture changes", () => {
-  const source = [
-    "async function Sg(){",
-    "let{startedAtMs:r,setSparkleBridgeHandlers:s,setSecondInstanceArgsHandler:c}=e.o(),",
-    "F=Lp({windowServices:M,ensureHostWindow:M.ensureHostWindow});",
-    "e.mn().info(`Launching app`,{safe:{platform:process.platform,agentRunId:process.env.CODEX_ELECTRON_AGENT_RUN_ID?.trim()||null}});",
-    "let k=Date.now();",
-    "await n.app.whenReady();",
-    "let M=ng({windowManager:S}),",
-    "te=zf();",
-    "s({onInstallUpdatesRequested:te.allowQuitTemporarilyForUpdateInstall,isTrustedIpcEvent:A});",
-    "c(e=>{F.deepLinks.queueProcessArgs(e)}),",
-    "k=Date.now(),",
-    "F.deepLinks.registerProtocolClient(),",
-    "k=Date.now();",
-    "let ie=await M.ensureHostWindow(y);",
-    "ie&&(ie.isMinimized()&&ie.restore(),ie.show(),ie.focus()),",
-    "k=Date.now(),",
-    "await F.deepLinks.flushPendingDeepLinks(),",
-    "w(`startup complete`,r)}",
+test("handles reordered Computer Use gate destructuring", () => {
+  const darwinOnlySource = [
+    "var tn=`computer-use`;",
+    "var $n=[{name:tn,isEnabled:({platform:t,features:e})=>t===`darwin`&&e.computerUse,migrate:wn}];",
+  ].join("");
+  const alreadyLinuxEnabledSource = [
+    "var tn=`computer-use`;",
+    "var $n=[{installWhenMissing:!0,name:tn,isEnabled:({platform:t,features:e})=>(t===`darwin`||t===`linux`)&&e.computerUse,migrate:wn}];",
   ].join("");
 
-  assert.doesNotThrow(() => applyLinuxLaunchActionArgsPatch(source));
+  const patched = applyPatchTwice(applyLinuxComputerUsePluginGatePatch, darwinOnlySource);
+
+  assert.match(
+    patched,
+    /\{installWhenMissing:!0,name:tn,isEnabled:\(\{features:e,platform:t\}\)=>\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse,migrate:wn\}/,
+  );
+  assert.equal(applyPatchTwice(applyLinuxComputerUsePluginGatePatch, alreadyLinuxEnabledSource), alreadyLinuxEnabledSource);
+});
+
+test("targets literal Computer Use gate names without patching unrelated descriptors", () => {
+  const source = [
+    "var other=`other-plugin`;",
+    "var $n=[{name:other,isEnabled:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:on},{name:`computer-use`,isEnabled:({platform:t,features:e})=>t===`darwin`&&e.computerUse,migrate:wn}];",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxComputerUsePluginGatePatch, source);
+
+  assert.match(patched, /name:other,isEnabled:\(\{features:e,platform:t\}\)=>t===`darwin`&&e\.computerUse,migrate:on/);
+  assert.match(
+    patched,
+    /name:`computer-use`,isEnabled:\(\{features:e,platform:t\}\)=>\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse,migrate:wn/,
+  );
+});
+
+test("handles quoted Computer Use gate names", () => {
+  const boundNameSource = [
+    "var tn=\"computer-use\";",
+    "var $n=[{name:tn,isEnabled:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:wn}];",
+  ].join("");
+  const literalNameSource = "var $n=[{name:'computer-use',isEnabled:({platform:t,features:e})=>t===`darwin`&&e.computerUse,migrate:wn}];";
+
+  const patchedBoundName = applyPatchTwice(applyLinuxComputerUsePluginGatePatch, boundNameSource);
+  const patchedLiteralName = applyPatchTwice(applyLinuxComputerUsePluginGatePatch, literalNameSource);
+
+  assert.match(patchedBoundName, /installWhenMissing:!0,name:tn/);
+  assert.match(patchedBoundName, /\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse/);
+  assert.match(patchedLiteralName, /installWhenMissing:!0,name:'computer-use'/);
+  assert.match(patchedLiteralName, /\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse/);
+});
+
+test("patches the current Computer Use gate without touching the Windows-internal descriptor", () => {
+  const source = [
+    "var Ye=`browser-use`,Xe=`chrome-internal`,Ze=`computer-use`,Qe=`latex-tectonic`;",
+    "var Dr=[{forceReload:!0,installWhenMissing:!0,name:Ye,isEnabled:({features:e})=>e.browserAgentAvailable,migrate:In},{forceReload:!0,name:Xe,isEnabled:({buildFlavor:e})=>Mn(e)},{name:Ze,isEnabled:({features:e,platform:t})=>t===`darwin`&&e.computerUse,migrate:Qn},{installWhenMissing:!0,name:Ze,isEnabled:({buildFlavor:e,features:n,platform:r})=>t.C.isInternal(e)&&r===`win32`&&n.computerUse},{name:Qe,isEnabled:()=>!0}];",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxComputerUsePluginGatePatch, source);
+
+  assert.match(patched, /name:Ze,isEnabled:\(\{features:e,platform:t\}\)=>\(t===`darwin`\|\|t===`linux`\)&&e\.computerUse,migrate:Qn/);
+  assert.match(patched, /t\.C\.isInternal\(e\)&&r===`win32`&&n\.computerUse/);
+  assert.equal((patched.match(/installWhenMissing:!0,name:Ze/g) || []).length, 2);
+});
+
+test("fails hard when the Computer Use gate is recognizable but unpatchable", () => {
+  assert.throws(
+    () => applyLinuxComputerUsePluginGatePatch("var tn=`computer-use`;var x=[{name:tn,isEnabled:({features:e,platform:t})=>isMac(t)&&e.computerUse,migrate:wn}];"),
+    /Required Linux Computer Use plugin gate patch failed/,
+  );
 });
 
 test("uses CODEX_APP_ID for Electron desktopName", () => {
