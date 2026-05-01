@@ -1,3 +1,0 @@
-[workspace]
-members = ["computer-use-linux", "updater"]
-resolver = "2"

@@ -1,9 +1,33 @@
+# Generated app/build artifacts
+Codex.dmg
 *.dmg
-node_modules/
 codex-app/
-codex-*-app/
-bin/codex-*
+*.asar
+*.asar.unpacked/
+*.zip
+electron.zip
+app-extracted/
+work/
+tmp/
+.tmp/
+.cache/
+
+# Runtime/local state
+.agents/
+.codex/
+*.log
+*.pid
+*.sqlite
+*.sqlite-*
+
+# Dependencies/build outputs
+node_modules/
 target/
 dist/
+build/
+coverage/
+
+# Editor/OS state
 .idea/
-.claude/
+.vscode/
+.DS_Store

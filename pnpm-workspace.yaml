@@ -1,0 +1,3 @@
+# pnpm 10.16+: only consider package versions published at least 7 days ago.
+# pnpm stores this value in minutes: 7 * 24 * 60 = 10080.
+minimumReleaseAge: 10080
