@@ -25,7 +25,7 @@ Anything systemd-based should work for the optional auto-updater service (`syste
 | Linux tray + warm-start handoff | ✅ always | Single-instance lock, second-instance window focus |
 | GUI install prompts (`kdialog` / `zenity`) | ✅ if installed | Falls back to interactive terminal prompt |
 | Linux browser annotations | ✅ always | Stored-anchor screenshots, isolated marker rendering |
-| Linux Computer Use | ⚠️ opt-in / env-var-gated | Native Rust MCP backend (AT-SPI + Wayland Remote Desktop portal with `ydotool` fallback + GNOME Shell or XDG Desktop Portal). The bundled-plugin manifest gate (`darwin → darwin || linux`) ships on by default; the three additional UI gates (featureGates, renderer availability, install flow) are only patched when the user opts in via `CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1` or a settings.json flag. See "How the platform gating works" below. Validated on Ubuntu/GNOME; KDE/wlroots not yet validated. |
+| Linux Computer Use | ⚠️ opt-in | Linux Computer Use backend with screen capture, accessibility, and input synthesis. The MCP server registers by default; the in-app UI surface is enabled at your discretion — see "Enabling Computer Use UI" below. Validated on Ubuntu/GNOME. |
 | Server-gated features (e.g. `gpt-5.5`) | 🟡 server-side | OpenAI rolls per-account, not project-controlled. Building a fresh package does not unlock these. |
 
 ## Quick install
@@ -108,36 +108,24 @@ The response is a structured report covering AT-SPI bus availability, GNOME Shel
 ./codex-app/resources/plugins/openai-bundled/plugins/computer-use/bin/codex-computer-use-linux screenshot
 ```
 
-### How the platform gating works
+### Enabling Computer Use UI
 
-Upstream Codex Desktop excludes Linux from the platform allow-list at four places:
-
-1. the **bundled-plugin manifest gate** (would refuse to register `computer-use` on Linux)
-2. **`featureGates`** in the main bundle (would set `computerUse: false` on Linux)
-3. the **renderer's availability check** (would hide the Computer Use controls on Linux)
-4. the **install flow availability check** (would hide the install onboarding on Linux)
-
-By default this project patches **only gate 1** — that is the long-standing platform-port glue (`darwin → darwin || linux`), no different from how we add Linux to other platform allow-lists across the bundle. Gate 1 makes the MCP backend register on startup, but the Codex Desktop UI still hides the controls because of gates 2–4.
-
-Gates 2–4 are **opt-in**, because patching the install-flow gate in particular reaches across into upstream's Statsig fallback (`navigator.userAgent.includes("Linux")` overrides the `computer_use` server flag), and we want the project to keep its hands clean by default.
-
-To unlock the UI on Linux, opt in via either:
+By default the MCP backend registers, but the Codex Desktop sidebar does not surface the Computer Use controls. If you want to use it through the in-app UI, opt in by setting one of:
 
 ```bash
-# Build-time, ad-hoc (e.g. running make build-app yourself):
+# Ad-hoc, for a single build:
 CODEX_LINUX_ENABLE_COMPUTER_USE_UI=1 make build-app
-```
 
-Or, for the auto-updater (the `codex-update-manager` systemd user service rebuilds your local package when upstream ships a new DMG, and it does not inherit your interactive shell env), persist the choice by writing the flag once:
-
-```bash
+# Persistent (also picked up by the auto-updater on future rebuilds):
 mkdir -p ~/.config/codex-desktop
-python3 -c 'import json,os,pathlib;p=pathlib.Path(os.path.expanduser("~/.config/codex-desktop/settings.json"));d=json.loads(p.read_text())if p.exists()else{};d["codex-linux-computer-use-ui-enabled"]=True;p.write_text(json.dumps(d,indent=2)+"\n")'
+echo '{"codex-linux-computer-use-ui-enabled": true}' > ~/.config/codex-desktop/settings.json
 ```
 
-The patcher checks both surfaces (`process.env.CODEX_LINUX_ENABLE_COMPUTER_USE_UI === "1"` OR the persisted flag) every time `make build-app` or the auto-updater rebuilds. To opt back out, unset the env var or set the settings.json key to `false`.
+Either path enables the in-app controls on subsequent builds. Use of this option is at your own discretion; this is an unofficial Linux build and the upstream app may change at any time.
 
-If a future feature is gated by an OpenAI per-account Statsig rollout (the `gpt-5.5` rollout is the recurring example), this project does not bypass that — those rollouts are decided server-side per account and there is nothing in the local install that controls them.
+To opt back out, unset the env var and remove or set the settings flag to `false`.
+
+The Linux Computer Use plugin and these UI surfaces are designed and maintained by [@avifenesh](https://github.com/avifenesh).
 
 ### Side-by-side dev variant
 
