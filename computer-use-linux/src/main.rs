@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
         Some("state") => {
             let app_name_or_bundle_identifier = std::env::args().nth(2);
             let nodes =
-                atspi_tree::snapshot_tree(app_name_or_bundle_identifier.as_deref(), 120, 12)
+                atspi_tree::snapshot_tree(app_name_or_bundle_identifier.as_deref(), None, 120, 12)
                     .await?;
             println!(
                 "{}",

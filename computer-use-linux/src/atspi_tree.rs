@@ -8,12 +8,17 @@ use atspi::{
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::collections::VecDeque;
-use zbus::{names::UniqueName, zvariant::ObjectPath};
+use zbus::{
+    fdo::DBusProxy,
+    names::{BusName, UniqueName},
+    zvariant::ObjectPath,
+};
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct AccessibleAppSummary {
     pub object_ref: String,
     pub name: Option<String>,
+    pub pid: Option<u32>,
     pub role: String,
     pub child_count: i32,
     pub bounds: Option<Bounds>,
@@ -76,11 +81,12 @@ pub enum ValueSetInvocation {
 pub async fn list_accessible_apps(limit: usize) -> Result<Vec<AccessibleAppSummary>> {
     let conn = connect().await?;
     let roots = registry_children(&conn).await?;
+    let dbus = DBusProxy::new(conn.connection()).await.ok();
     let mut apps = Vec::new();
 
     for object_ref in roots.into_iter().take(limit) {
         if let Ok(proxy) = conn.object_as_accessible(&object_ref).await {
-            apps.push(read_app_summary(&proxy, &object_ref).await);
+            apps.push(read_app_summary(&proxy, &object_ref, dbus.as_ref()).await);
         }
     }
 
@@ -89,12 +95,14 @@ pub async fn list_accessible_apps(limit: usize) -> Result<Vec<AccessibleAppSumma
 
 pub async fn snapshot_tree(
     app_name_or_bundle_identifier: Option<&str>,
+    target_pid: Option<u32>,
     max_nodes: usize,
     max_depth: u32,
 ) -> Result<Vec<AccessibilityNode>> {
     let conn = connect().await?;
     let roots = registry_children(&conn).await?;
-    let selected_roots = select_roots(&conn, roots, app_name_or_bundle_identifier).await;
+    let selected_roots =
+        select_roots(&conn, roots, app_name_or_bundle_identifier, target_pid).await;
     let mut nodes = Vec::new();
     let mut queue = VecDeque::new();
 
@@ -226,18 +234,53 @@ async fn select_roots(
     conn: &AccessibilityConnection,
     roots: Vec<ObjectRefOwned>,
     app_name_or_bundle_identifier: Option<&str>,
+    target_pid: Option<u32>,
 ) -> Vec<ObjectRefOwned> {
-    let Some(needle) = app_name_or_bundle_identifier
+    let needle = app_name_or_bundle_identifier
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| value.to_ascii_lowercase())
-    else {
-        return roots;
+        .map(|value| value.to_ascii_lowercase());
+    let dbus = DBusProxy::new(conn.connection()).await.ok();
+    let mut remaining = roots;
+
+    if let Some(target_pid) = target_pid {
+        let mut pid_and_filter_matches = Vec::new();
+        let mut pid_matches = Vec::new();
+        let mut non_pid_matches = Vec::new();
+
+        for object_ref in remaining {
+            if object_ref_pid(dbus.as_ref(), &object_ref).await == Some(target_pid) {
+                if let Some(needle) = needle.as_deref() {
+                    if root_matches(conn, &object_ref, needle).await {
+                        pid_and_filter_matches.push(object_ref);
+                    } else {
+                        pid_matches.push(object_ref);
+                    }
+                } else {
+                    pid_matches.push(object_ref);
+                }
+            } else {
+                non_pid_matches.push(object_ref);
+            }
+        }
+
+        if !pid_and_filter_matches.is_empty() {
+            return pid_and_filter_matches;
+        }
+        if !pid_matches.is_empty() {
+            return pid_matches;
+        }
+
+        remaining = non_pid_matches;
+    }
+
+    let Some(needle) = needle.as_deref() else {
+        return remaining;
     };
 
     let mut selected = Vec::new();
-    for object_ref in roots {
-        if root_matches(conn, &object_ref, &needle).await {
+    for object_ref in remaining {
+        if root_matches(conn, &object_ref, needle).await {
             selected.push(object_ref);
         }
     }
@@ -288,10 +331,12 @@ async fn proxy_matches(
 async fn read_app_summary(
     proxy: &AccessibleProxy<'_>,
     object_ref: &ObjectRefOwned,
+    dbus: Option<&DBusProxy<'_>>,
 ) -> AccessibleAppSummary {
     AccessibleAppSummary {
         object_ref: object_ref_id(object_ref),
         name: optional_string(proxy.name().await.ok()),
+        pid: object_ref_pid(dbus, object_ref).await,
         role: role_name(proxy).await,
         child_count: proxy.child_count().await.unwrap_or_default(),
         bounds: bounds(proxy).await,
@@ -338,6 +383,12 @@ async fn role_name(proxy: &AccessibleProxy<'_>) -> String {
 
 async fn bounds(proxy: &AccessibleProxy<'_>) -> Option<Bounds> {
     bounds_from_proxies(proxy.proxies().await.ok().as_ref(), proxy).await
+}
+
+async fn object_ref_pid(dbus: Option<&DBusProxy<'_>>, object_ref: &ObjectRefOwned) -> Option<u32> {
+    let dbus = dbus?;
+    let bus_name = BusName::try_from(object_ref.name_as_str()?.to_string()).ok()?;
+    dbus.get_connection_unix_process_id(bus_name).await.ok()
 }
 
 async fn bounds_from_proxies(

@@ -171,24 +171,9 @@ impl ComputerUseLinux {
         let max_nodes = params.max_nodes.unwrap_or(120).clamp(1, 500);
         let max_depth = params.max_depth.unwrap_or(12).min(12);
         let include_screenshot = params.include_screenshot.unwrap_or(true);
-        let app_filter = params
-            .app_name_or_bundle_identifier
-            .as_deref()
-            .or_else(|| {
-                window_context
-                    .as_ref()
-                    .and_then(|window| window.app_id.as_deref())
-            })
-            .or_else(|| {
-                window_context
-                    .as_ref()
-                    .and_then(|window| window.wm_class.as_deref())
-            })
-            .or_else(|| {
-                window_context
-                    .as_ref()
-                    .and_then(|window| window.title.as_deref())
-            });
+        let app_filter = self
+            .resolve_accessibility_app_filter(&params, window_context.as_ref())
+            .await;
         let (screenshot, screenshot_error) = if include_screenshot {
             match capture_screenshot().await {
                 Ok(capture) => (Some(capture), None),
@@ -199,7 +184,8 @@ impl ComputerUseLinux {
         };
         let (accessibility_tree, accessibility_error) =
             if diagnostics.readiness.can_build_accessibility_tree {
-                match snapshot_tree(app_filter, max_nodes, max_depth).await {
+                let target_pid = window_context.as_ref().and_then(|window| window.pid);
+                match snapshot_tree(app_filter.as_deref(), target_pid, max_nodes, max_depth).await {
                     Ok(nodes) => (nodes, None),
                     Err(error) => (Vec::new(), Some(error.to_string())),
                 }
@@ -1038,6 +1024,31 @@ impl ComputerUseLinux {
         }
     }
 
+    async fn resolve_accessibility_app_filter(
+        &self,
+        params: &GetAppStateParams,
+        window_context: Option<&WindowInfo>,
+    ) -> Option<String> {
+        if let Some(explicit) = trimmed_nonempty(params.app_name_or_bundle_identifier.as_deref()) {
+            return Some(explicit.to_string());
+        }
+
+        let target_pid = window_context.and_then(|window| window.pid).or(params.pid);
+        let candidates = accessibility_filter_candidates(window_context);
+
+        if let Some(target_pid) = target_pid {
+            if let Ok(apps) = list_accessible_apps(200).await {
+                if let Some(object_ref) =
+                    select_accessibility_object_ref(&apps, target_pid, &candidates)
+                {
+                    return Some(object_ref);
+                }
+            }
+        }
+
+        candidates.into_iter().next()
+    }
+
     async fn focus_target_for_input(
         &self,
         target: &WindowTarget,
@@ -1153,6 +1164,76 @@ impl ComputerUseLinux {
                 )
             })
     }
+}
+
+fn select_accessibility_object_ref(
+    apps: &[AccessibleAppSummary],
+    target_pid: u32,
+    candidates: &[String],
+) -> Option<String> {
+    let mut pid_matches = apps.iter().filter(|app| app.pid == Some(target_pid));
+    let first = pid_matches.next()?;
+    let second = pid_matches.next();
+
+    if second.is_none() {
+        return Some(first.object_ref.clone());
+    }
+
+    let lowered_candidates = candidates
+        .iter()
+        .map(|candidate| candidate.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
+    apps.iter()
+        .filter(|app| app.pid == Some(target_pid))
+        .find(|app| {
+            let name = app.name.as_deref().unwrap_or_default().to_ascii_lowercase();
+            lowered_candidates
+                .iter()
+                .any(|candidate| !candidate.is_empty() && name.contains(candidate))
+        })
+        .map(|app| app.object_ref.clone())
+        .or_else(|| Some(first.object_ref.clone()))
+}
+
+fn accessibility_filter_candidates(window_context: Option<&WindowInfo>) -> Vec<String> {
+    let Some(window) = window_context else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::new();
+    push_candidate(&mut candidates, window.title.as_deref());
+    push_candidate(&mut candidates, window.wm_class.as_deref());
+
+    if let Some(app_id) = trimmed_nonempty(window.app_id.as_deref()) {
+        if !app_id.starts_with("window:") {
+            push_candidate(&mut candidates, Some(app_id));
+            if let Some(stripped) = app_id.strip_suffix(".desktop") {
+                push_candidate(&mut candidates, Some(stripped));
+                let normalized = stripped.replace(['-', '_', '.'], " ");
+                push_candidate(&mut candidates, Some(normalized.as_str()));
+            } else {
+                let normalized = app_id.replace(['-', '_', '.'], " ");
+                push_candidate(&mut candidates, Some(normalized.as_str()));
+            }
+        }
+    }
+
+    candidates
+}
+
+fn push_candidate(candidates: &mut Vec<String>, value: Option<&str>) {
+    let Some(value) = trimmed_nonempty(value) else {
+        return;
+    };
+
+    if !candidates.iter().any(|candidate| candidate == value) {
+        candidates.push(value.to_string());
+    }
+}
+
+fn trimmed_nonempty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn action_result(
@@ -1520,6 +1601,7 @@ fn looks_like_desktop_app(name: &str, command: &str) -> bool {
 mod tests {
     use super::*;
     use crate::atspi_tree::Bounds;
+    use crate::windows::WindowBounds;
 
     fn node(index: u32, bounds: Option<Bounds>) -> AccessibilityNode {
         AccessibilityNode {
@@ -1536,6 +1618,89 @@ mod tests {
             value: None,
             supports_editable_text: false,
         }
+    }
+
+    fn window_info(
+        window_id: u64,
+        title: Option<&str>,
+        app_id: Option<&str>,
+        wm_class: Option<&str>,
+        pid: Option<u32>,
+    ) -> WindowInfo {
+        WindowInfo {
+            window_id,
+            title: title.map(str::to_string),
+            app_id: app_id.map(str::to_string),
+            wm_class: wm_class.map(str::to_string),
+            pid,
+            bounds: Some(WindowBounds {
+                x: Some(10),
+                y: Some(20),
+                width: 800,
+                height: 600,
+            }),
+            workspace: Some(0),
+            focused: false,
+            hidden: false,
+            client_type: Some("wayland".to_string()),
+            backend: GNOME_SHELL_EXTENSION_BACKEND.to_string(),
+            terminal: None,
+        }
+    }
+
+    #[test]
+    fn accessibility_filter_candidates_prefer_title_and_skip_synthetic_app_id() {
+        let window = window_info(
+            42,
+            Some("CU ATSPI GTK Test"),
+            Some("window:46"),
+            Some("cu_atspi_gtk_test.py"),
+            Some(2914326),
+        );
+
+        let candidates = accessibility_filter_candidates(Some(&window));
+
+        assert_eq!(
+            candidates,
+            vec![
+                "CU ATSPI GTK Test".to_string(),
+                "cu_atspi_gtk_test.py".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn select_accessibility_object_ref_prefers_exact_pid_match() {
+        let apps = vec![
+            AccessibleAppSummary {
+                object_ref: ":1.31/org/a11y/atspi/accessible/root".to_string(),
+                name: Some("electron".to_string()),
+                pid: Some(2774076),
+                role: "application".to_string(),
+                child_count: 1,
+                bounds: None,
+            },
+            AccessibleAppSummary {
+                object_ref: ":1.64/org/a11y/atspi/accessible/root".to_string(),
+                name: Some("cu_atspi_gtk_test.py".to_string()),
+                pid: Some(2914326),
+                role: "application".to_string(),
+                child_count: 1,
+                bounds: None,
+            },
+        ];
+
+        let object_ref = select_accessibility_object_ref(
+            &apps,
+            2914326,
+            &[
+                "CU ATSPI GTK Test".to_string(),
+                "cu_atspi_gtk_test.py".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(object_ref, ":1.64/org/a11y/atspi/accessible/root");
     }
 
     #[test]
