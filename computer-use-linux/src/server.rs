@@ -1,5 +1,6 @@
 use crate::atspi_tree::{
-    list_accessible_apps, snapshot_tree, AccessibilityNode, AccessibleAppSummary,
+    list_accessible_apps, perform_action, set_element_value, snapshot_tree, AccessibilityNode,
+    AccessibleAppSummary, ValueSetInvocation,
 };
 use crate::diagnostics::{doctor_report, setup_accessibility_report, DoctorReport, SetupReport};
 use crate::gnome_extension::{setup_window_targeting_report, WindowTargetingSetupReport};
@@ -170,24 +171,9 @@ impl ComputerUseLinux {
         let max_nodes = params.max_nodes.unwrap_or(120).clamp(1, 500);
         let max_depth = params.max_depth.unwrap_or(12).min(12);
         let include_screenshot = params.include_screenshot.unwrap_or(true);
-        let app_filter = params
-            .app_name_or_bundle_identifier
-            .as_deref()
-            .or_else(|| {
-                window_context
-                    .as_ref()
-                    .and_then(|window| window.app_id.as_deref())
-            })
-            .or_else(|| {
-                window_context
-                    .as_ref()
-                    .and_then(|window| window.wm_class.as_deref())
-            })
-            .or_else(|| {
-                window_context
-                    .as_ref()
-                    .and_then(|window| window.title.as_deref())
-            });
+        let app_filter = self
+            .resolve_accessibility_app_filter(&params, window_context.as_ref())
+            .await;
         let (screenshot, screenshot_error) = if include_screenshot {
             match capture_screenshot().await {
                 Ok(capture) => (Some(capture), None),
@@ -198,7 +184,8 @@ impl ComputerUseLinux {
         };
         let (accessibility_tree, accessibility_error) =
             if diagnostics.readiness.can_build_accessibility_tree {
-                match snapshot_tree(app_filter, max_nodes, max_depth).await {
+                let target_pid = window_context.as_ref().and_then(|window| window.pid);
+                match snapshot_tree(app_filter.as_deref(), target_pid, max_nodes, max_depth).await {
                     Ok(nodes) => (nodes, None),
                     Err(error) => (Vec::new(), Some(error.to_string())),
                 }
@@ -211,7 +198,9 @@ impl ComputerUseLinux {
                     ),
                 )
             };
-        self.cache_nodes(&accessibility_tree);
+        if accessibility_error.is_none() {
+            self.cache_nodes(&accessibility_tree);
+        }
         let mut message = if let Some(error) = &accessibility_error {
             format!("MCP registration is working, but AT-SPI tree extraction failed: {error}")
         } else if let Some(capture) = &screenshot {
@@ -338,27 +327,111 @@ impl ComputerUseLinux {
         name = "perform_secondary_action",
         description = "Invoke a secondary accessibility action exposed by an element."
     )]
-    fn perform_secondary_action(
+    async fn perform_secondary_action(
         &self,
         Parameters(params): Parameters<SecondaryActionParams>,
     ) -> Json<ActionOutput> {
-        Json(not_implemented(
-            "perform_secondary_action",
-            Some(serde_json::json!(params)),
-            "AT-SPI secondary actions need the element action cache and are not wired yet.",
-        ))
+        let received = Some(serde_json::json!(params.clone()));
+        let object_ref = match self
+            .resolve_object_ref(params.element_index, params.element_identifier.as_deref())
+        {
+            Ok(object_ref) => object_ref,
+            Err(message) => {
+                return Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "perform_secondary_action".to_string(),
+                    message,
+                    received,
+                });
+            }
+        };
+
+        match perform_action(&object_ref, params.action.as_deref()).await {
+            Ok(invocation) => Json(ActionOutput {
+                ok: invocation.ok,
+                implemented: true,
+                action: "perform_secondary_action".to_string(),
+                message: if invocation.ok {
+                    format!(
+                        "AT-SPI action {} ({}) invoked.",
+                        invocation.action_index,
+                        invocation
+                            .action_name
+                            .as_deref()
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or("unnamed")
+                    )
+                } else {
+                    format!(
+                        "AT-SPI action {} ({}) returned false.",
+                        invocation.action_index,
+                        invocation
+                            .action_name
+                            .as_deref()
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or("unnamed")
+                    )
+                },
+                received,
+            }),
+            Err(error) => Json(ActionOutput {
+                ok: false,
+                implemented: true,
+                action: "perform_secondary_action".to_string(),
+                message: error.to_string(),
+                received,
+            }),
+        }
     }
 
     #[tool(
         name = "set_value",
         description = "Set the value of a settable accessibility element."
     )]
-    fn set_value(&self, Parameters(params): Parameters<SetValueParams>) -> Json<ActionOutput> {
-        Json(not_implemented(
-            "set_value",
-            Some(serde_json::json!(params)),
-            "AT-SPI value setting needs the element value cache and is not wired yet.",
-        ))
+    async fn set_value(
+        &self,
+        Parameters(params): Parameters<SetValueParams>,
+    ) -> Json<ActionOutput> {
+        let received = Some(serde_json::json!(params.clone()));
+        let object_ref = match self
+            .resolve_object_ref(params.element_index, params.element_identifier.as_deref())
+        {
+            Ok(object_ref) => object_ref,
+            Err(message) => {
+                return Json(ActionOutput {
+                    ok: false,
+                    implemented: true,
+                    action: "set_value".to_string(),
+                    message,
+                    received,
+                });
+            }
+        };
+
+        match set_element_value(&object_ref, &params.value).await {
+            Ok(ValueSetInvocation::Numeric { value }) => Json(ActionOutput {
+                ok: true,
+                implemented: true,
+                action: "set_value".to_string(),
+                message: format!("AT-SPI numeric value set to {value}."),
+                received,
+            }),
+            Ok(ValueSetInvocation::EditableText) => Json(ActionOutput {
+                ok: true,
+                implemented: true,
+                action: "set_value".to_string(),
+                message: "AT-SPI editable text contents set.".to_string(),
+                received,
+            }),
+            Err(error) => Json(ActionOutput {
+                ok: false,
+                implemented: true,
+                action: "set_value".to_string(),
+                message: error.to_string(),
+                received,
+            }),
+        }
     }
 
     #[tool(
@@ -593,7 +666,7 @@ impl ComputerUseLinux {
 #[tool_handler(
     name = "codex-computer-use-linux",
     version = "0.1.0",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees, list/focus GNOME Shell windows when org.gnome.Shell.Introspect or the Codex GNOME Shell extension permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate, element-index click/scroll/drag input through the Wayland remote desktop portal when available or through ydotool otherwise. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus GNOME Shell windows when org.gnome.Shell.Introspect or the Codex GNOME Shell extension permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate, element-index click/scroll/drag input through the Wayland remote desktop portal when available or through ydotool otherwise. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -951,6 +1024,31 @@ impl ComputerUseLinux {
         }
     }
 
+    async fn resolve_accessibility_app_filter(
+        &self,
+        params: &GetAppStateParams,
+        window_context: Option<&WindowInfo>,
+    ) -> Option<String> {
+        if let Some(explicit) = trimmed_nonempty(params.app_name_or_bundle_identifier.as_deref()) {
+            return Some(explicit.to_string());
+        }
+
+        let target_pid = window_context.and_then(|window| window.pid).or(params.pid);
+        let candidates = accessibility_filter_candidates(window_context);
+
+        if let Some(target_pid) = target_pid {
+            if let Ok(apps) = list_accessible_apps(200).await {
+                if let Some(object_ref) =
+                    select_accessibility_object_ref(&apps, target_pid, &candidates)
+                {
+                    return Some(object_ref);
+                }
+            }
+        }
+
+        candidates.into_iter().next()
+    }
+
     async fn focus_target_for_input(
         &self,
         target: &WindowTarget,
@@ -1033,20 +1131,109 @@ impl ComputerUseLinux {
         }
         Some((bounds.x + bounds.width / 2, bounds.y + bounds.height / 2))
     }
+
+    fn resolve_object_ref(
+        &self,
+        element_index: Option<u32>,
+        element_identifier: Option<&str>,
+    ) -> std::result::Result<String, String> {
+        if let Some(element_identifier) = element_identifier
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Ok(element_identifier.to_string());
+        }
+
+        let Some(element_index) = element_index else {
+            return Err(
+                "Pass element_index from the latest get_app_state result or element_identifier."
+                    .to_string(),
+            );
+        };
+
+        let cached = self.last_nodes.lock().map_err(|_| {
+            "Could not read cached accessibility nodes. Call get_app_state and retry.".to_string()
+        })?;
+        cached
+            .iter()
+            .find(|node| node.index == element_index)
+            .map(|node| node.object_ref.clone())
+            .ok_or_else(|| {
+                format!(
+                    "No cached accessibility node for element_index {element_index}. Call get_app_state first."
+                )
+            })
+    }
 }
 
-fn not_implemented(
-    action: &str,
-    received: Option<serde_json::Value>,
-    message: &str,
-) -> ActionOutput {
-    ActionOutput {
-        ok: false,
-        implemented: false,
-        action: action.to_string(),
-        message: message.to_string(),
-        received,
+fn select_accessibility_object_ref(
+    apps: &[AccessibleAppSummary],
+    target_pid: u32,
+    candidates: &[String],
+) -> Option<String> {
+    let mut pid_matches = apps.iter().filter(|app| app.pid == Some(target_pid));
+    let first = pid_matches.next()?;
+    let second = pid_matches.next();
+
+    if second.is_none() {
+        return Some(first.object_ref.clone());
     }
+
+    let lowered_candidates = candidates
+        .iter()
+        .map(|candidate| candidate.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
+    apps.iter()
+        .filter(|app| app.pid == Some(target_pid))
+        .find(|app| {
+            let name = app.name.as_deref().unwrap_or_default().to_ascii_lowercase();
+            lowered_candidates
+                .iter()
+                .any(|candidate| !candidate.is_empty() && name.contains(candidate))
+        })
+        .map(|app| app.object_ref.clone())
+        .or_else(|| Some(first.object_ref.clone()))
+}
+
+fn accessibility_filter_candidates(window_context: Option<&WindowInfo>) -> Vec<String> {
+    let Some(window) = window_context else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::new();
+    push_candidate(&mut candidates, window.title.as_deref());
+    push_candidate(&mut candidates, window.wm_class.as_deref());
+
+    if let Some(app_id) = trimmed_nonempty(window.app_id.as_deref()) {
+        if !app_id.starts_with("window:") {
+            push_candidate(&mut candidates, Some(app_id));
+            if let Some(stripped) = app_id.strip_suffix(".desktop") {
+                push_candidate(&mut candidates, Some(stripped));
+                let normalized = stripped.replace(['-', '_', '.'], " ");
+                push_candidate(&mut candidates, Some(normalized.as_str()));
+            } else {
+                let normalized = app_id.replace(['-', '_', '.'], " ");
+                push_candidate(&mut candidates, Some(normalized.as_str()));
+            }
+        }
+    }
+
+    candidates
+}
+
+fn push_candidate(candidates: &mut Vec<String>, value: Option<&str>) {
+    let Some(value) = trimmed_nonempty(value) else {
+        return;
+    };
+
+    if !candidates.iter().any(|candidate| candidate == value) {
+        candidates.push(value.to_string());
+    }
+}
+
+fn trimmed_nonempty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 fn action_result(
@@ -1414,6 +1601,7 @@ fn looks_like_desktop_app(name: &str, command: &str) -> bool {
 mod tests {
     use super::*;
     use crate::atspi_tree::Bounds;
+    use crate::windows::WindowBounds;
 
     fn node(index: u32, bounds: Option<Bounds>) -> AccessibilityNode {
         AccessibilityNode {
@@ -1426,7 +1614,93 @@ mod tests {
             description: None,
             child_count: 0,
             bounds,
+            actions: Vec::new(),
+            value: None,
+            supports_editable_text: false,
         }
+    }
+
+    fn window_info(
+        window_id: u64,
+        title: Option<&str>,
+        app_id: Option<&str>,
+        wm_class: Option<&str>,
+        pid: Option<u32>,
+    ) -> WindowInfo {
+        WindowInfo {
+            window_id,
+            title: title.map(str::to_string),
+            app_id: app_id.map(str::to_string),
+            wm_class: wm_class.map(str::to_string),
+            pid,
+            bounds: Some(WindowBounds {
+                x: Some(10),
+                y: Some(20),
+                width: 800,
+                height: 600,
+            }),
+            workspace: Some(0),
+            focused: false,
+            hidden: false,
+            client_type: Some("wayland".to_string()),
+            backend: GNOME_SHELL_EXTENSION_BACKEND.to_string(),
+            terminal: None,
+        }
+    }
+
+    #[test]
+    fn accessibility_filter_candidates_prefer_title_and_skip_synthetic_app_id() {
+        let window = window_info(
+            42,
+            Some("CU ATSPI GTK Test"),
+            Some("window:46"),
+            Some("cu_atspi_gtk_test.py"),
+            Some(2914326),
+        );
+
+        let candidates = accessibility_filter_candidates(Some(&window));
+
+        assert_eq!(
+            candidates,
+            vec![
+                "CU ATSPI GTK Test".to_string(),
+                "cu_atspi_gtk_test.py".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn select_accessibility_object_ref_prefers_exact_pid_match() {
+        let apps = vec![
+            AccessibleAppSummary {
+                object_ref: ":1.31/org/a11y/atspi/accessible/root".to_string(),
+                name: Some("electron".to_string()),
+                pid: Some(2774076),
+                role: "application".to_string(),
+                child_count: 1,
+                bounds: None,
+            },
+            AccessibleAppSummary {
+                object_ref: ":1.64/org/a11y/atspi/accessible/root".to_string(),
+                name: Some("cu_atspi_gtk_test.py".to_string()),
+                pid: Some(2914326),
+                role: "application".to_string(),
+                child_count: 1,
+                bounds: None,
+            },
+        ];
+
+        let object_ref = select_accessibility_object_ref(
+            &apps,
+            2914326,
+            &[
+                "CU ATSPI GTK Test".to_string(),
+                "cu_atspi_gtk_test.py".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(object_ref, ":1.64/org/a11y/atspi/accessible/root");
     }
 
     #[test]
@@ -1571,5 +1845,27 @@ mod tests {
             key_sequence("Super"),
             Some(vec!["125:1".to_string(), "125:0".to_string()])
         );
+    }
+
+    #[test]
+    fn element_identifier_overrides_cached_object_ref() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_nodes(&[node(7, None)]);
+
+        let object_ref = backend
+            .resolve_object_ref(Some(7), Some(":1.99/org/a11y/atspi/accessible/3"))
+            .unwrap();
+
+        assert_eq!(object_ref, ":1.99/org/a11y/atspi/accessible/3");
+    }
+
+    #[test]
+    fn element_index_resolves_to_cached_object_ref() {
+        let backend = ComputerUseLinux::default();
+        backend.cache_nodes(&[node(7, None)]);
+
+        let object_ref = backend.resolve_object_ref(Some(7), None).unwrap();
+
+        assert_eq!(object_ref, ":1.7/org/a11y/atspi/accessible/7");
     }
 }
