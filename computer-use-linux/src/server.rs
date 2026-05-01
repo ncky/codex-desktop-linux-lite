@@ -281,7 +281,7 @@ impl ComputerUseLinux {
                 x,
                 y,
                 PointerButton::from_name(params.button.as_deref()),
-                params.click_count.unwrap_or(1).clamp(1, 10) as u32,
+                params.click_count.unwrap_or(1).clamp(1, 10),
             )
             .await
             {
@@ -303,7 +303,7 @@ impl ComputerUseLinux {
                     x,
                     y,
                     PointerButton::from_name(params.button.as_deref()),
-                    params.click_count.unwrap_or(1).clamp(1, 10) as u32,
+                    params.click_count.unwrap_or(1).clamp(1, 10),
                 )
                 .await
                 {
